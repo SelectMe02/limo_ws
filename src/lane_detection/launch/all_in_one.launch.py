@@ -52,10 +52,10 @@ def generate_launch_description():
                 'use_traffic_light': False,
 
                 # 필요하면 여기서 속도도 같이 제한 가능
-                'max_speed': 0.45,
-                'tunnel_speed': 0.22,
-                'avoid_speed': 0.22,
-                'follow_speed': 0.18,
+                # 'max_speed': 0.45,
+                # 'tunnel_speed': 0.22,
+                # 'avoid_speed': 0.22,
+                # 'follow_speed': 0.18,
             }
         ],
     )

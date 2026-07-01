@@ -340,15 +340,11 @@ class StanleyMissionFSMNode(Node):
         self.declare_parameter('box_clear_time', 1.2)
         self.declare_parameter('tunnel_min_time', 1.5)
         self.declare_parameter('tunnel_recover_frames', 6)
-        self.declare_parameter('rotary_min_time', 4.0)
+        self.declare_parameter('rotary_min_time', 10.0)
         self.declare_parameter('rotary_clear_time', 2.0)
         self.declare_parameter('rotary_require_seen', True)
         self.declare_parameter('cone_min_time', 5.0)
         self.declare_parameter('cone_latched_min_time', 2.0)
-        self.declare_parameter('cone_target_vote_window', 5)
-        self.declare_parameter('cone_lane_bias_ratio', 0.62)
-        self.declare_parameter('cone_recover_time', 1.0)
-        self.declare_parameter('cone_recover_confidence', 0.55)
         # ROTARY부터 들어오는 고깔 정보만 저장한다.
         # PEDESTRIAN/BOX1/TUNNEL에서 들어온 고깔 정보는 전부 무시한다.
         self.declare_parameter('cone_accept_states', ['ROTARY', 'CONE'])
@@ -356,34 +352,27 @@ class StanleyMissionFSMNode(Node):
 
         # 미션별 속도 제한. 실제 제어 계산은 원래 Stanley 제어가 하고,
         # 여기서는 상태별로 최고속도만 제한한다.
-        self.declare_parameter('ped_speed_limit', 0.65)
+        self.declare_parameter('ped_speed_limit', 0.36)
         self.declare_parameter('box_speed_limit', 0.30)
         self.declare_parameter('avoid_speed_limit', 0.24)
-        self.declare_parameter('rotary_speed_limit', 0.70)
+        self.declare_parameter('rotary_speed_limit', 0.32)
         self.declare_parameter('follow_speed_limit', 0.22)
-        self.declare_parameter('cone_speed_limit', 0.50)
+        self.declare_parameter('cone_speed_limit', 0.28)
         self.declare_parameter('parking_approach_speed_limit', 0.24)
 
         # -------------------------
         # Tight LiDAR sector params
         # -------------------------
         # 보행자: 전방 ±20도, 0.50m 이내만 정지 대상으로 본다.
-        self.declare_parameter('ped_front_angle_deg', 35.0)
+        self.declare_parameter('ped_front_angle_deg', 20.0)
         self.declare_parameter('ped_front_distance', 0.50)
         self.declare_parameter('ped_front_min_hits', 5)
-        self.declare_parameter('ped_line_roi_y_min_ratio', 0.42)
-        self.declare_parameter('ped_line_roi_y_max_ratio', 0.78)
-        self.declare_parameter('ped_line_fill_ratio', 0.55)
-        self.declare_parameter('ped_line_min_width_px', 90)
-        self.declare_parameter('ped_line_min_rows', 4)
-        self.declare_parameter('ped_line_stop_drop_ratio', 0.35)
 
         # 박스:
         # 1) 현재 주행 중인 트랙 corridor 안에 있는 LiDAR 클러스터인지 먼저 확인한다.
-        # 2) 그 클러스터가 설정한 LiDAR 각도 영역에 걸쳐 있어야 한다.
-        # 3) 추가로 10cm 이내의 가까운 점과 L-shape 특징을 만족해야 박스로 인정한다.
+        # 2) 그 클러스터가 설정한 LiDAR 각도 영역에 걸쳐 있을 때만 박스로 인정한다.
         # 이렇게 해야 다른 트랙/벽의 물체가 단순 각도 조건만으로 박스가 되는 것을 줄일 수 있다.
-        self.declare_parameter('box_front_angle_deg', 60.0)
+        self.declare_parameter('box_front_angle_deg', 20.0)
         self.declare_parameter('box_front_stop_distance', 0.45)
         self.declare_parameter('box_front_min_hits', 4)
         self.declare_parameter('box_side_angle_min_deg', 20.0)
@@ -392,52 +381,20 @@ class StanleyMissionFSMNode(Node):
         self.declare_parameter('box_side_min_hits', 2)
         self.declare_parameter('box_track_x_min', 0.15)
         self.declare_parameter('box_track_x_max', 0.95)
-        self.declare_parameter('box_track_half_width', 0.32)
+        self.declare_parameter('box_track_half_width', 0.24)
         self.declare_parameter('box_track_min_points', 3)
         self.declare_parameter('box_wall_width_threshold', 0.58)
-        self.declare_parameter('box1_close_side_distance', 0.20)
-        self.declare_parameter('box1_close_side_min_hits', 2)
-        self.declare_parameter('box1_close_wall_width_threshold', 0.38)
-        self.declare_parameter('box1_close_wall_x_span', 0.30)
-
-        # 박스 L-shape 판정 파라미터.
-        # box_lshape_near_distance는 20cm 이내의 가까운 점까지 L-shape 후보로 본다.
-        self.declare_parameter('box_lshape_near_distance', 0.20)
-        self.declare_parameter('box_lshape_min_points', 6)
-        self.declare_parameter('box_lshape_min_x_span', 0.05)
-        self.declare_parameter('box_lshape_min_y_span', 0.05)
-        self.declare_parameter('box_lshape_corner_band', 0.035)
-        self.declare_parameter('box_lshape_min_leg_points', 2)
-        self.declare_parameter('box_avoid_hold_time', 0.7)
-
-        # BOX2는 큰 곡률 구간에서 보이므로 BOX1보다 ROI/각도를 조금 넓게 쓴다.
-        self.declare_parameter('box2_track_half_width', 0.34)
-        self.declare_parameter('box2_front_angle_deg', 70.0)
-        self.declare_parameter('box2_front_min_hits', 3)
-        self.declare_parameter('box2_side_min_hits', 2)
-        self.declare_parameter('box2_avoid_hold_time', 0.9)
-        self.declare_parameter('box2_extra_yaw', 0.65)
-        self.declare_parameter('box2_left_fallback_enabled', True)
 
         # 터널:
-        # 짧은 터널이므로 카메라 밝기 대신 LiDAR 좌/우 벽 검출로 진입/탈출을 판단한다.
-        self.declare_parameter('tunnel_enter_frames', 2)
-        self.declare_parameter('tunnel_exit_frames', 2)
-        self.declare_parameter('tunnel_enter_min_time', 0.2)
-        self.declare_parameter('tunnel_memory_min_time', 0.2)
-        self.declare_parameter('tunnel_wall_distance', 0.30)
-        self.declare_parameter('tunnel_wall_min_y', 0.08)
-        self.declare_parameter('tunnel_wall_x_min', -0.05)
-        self.declare_parameter('tunnel_wall_x_max', 0.70)
-        self.declare_parameter('tunnel_wall_min_hits', 3)
-        self.declare_parameter('tunnel_exit_drive_distance', 0.80)
-        self.declare_parameter('tunnel_approach_force_right', True)
-        self.declare_parameter('tunnel_approach_right_yaw', 0.65)
-        self.declare_parameter('tunnel_approach_speed_limit', 0.35)
+        # 기존처럼 밝기 저하 + 흰색 라인 부족으로 tunnel_like를 만들되,
+        # 한 프레임만 보고 터널 진입/탈출을 판단하지 않도록 연속 프레임 gate를 둔다.
+        self.declare_parameter('tunnel_enter_frames', 5)
+        self.declare_parameter('tunnel_enter_min_time', 0.8)
+        self.declare_parameter('tunnel_memory_min_time', 0.8)
 
         # 회전교차로 차량: 사용자가 보낸 TrackVehicleFollowNode의 전방 차량 추종 구조를 반영한다.
         self.declare_parameter('rotary_front_x_min', 0.15)
-        self.declare_parameter('rotary_front_x_max', 1.50)
+        self.declare_parameter('rotary_front_x_max', 0.50)
         self.declare_parameter('rotary_front_half_width', 0.36)
         self.declare_parameter('rotary_cluster_min_points', 3)
         self.declare_parameter('rotary_wall_width_threshold', 0.65)
@@ -470,10 +427,6 @@ class StanleyMissionFSMNode(Node):
         self.rotary_require_seen = bool(self.get_parameter('rotary_require_seen').value)
         self.cone_min_time = float(self.get_parameter('cone_min_time').value)
         self.cone_latched_min_time = float(self.get_parameter('cone_latched_min_time').value)
-        self.cone_target_vote_window = int(self.get_parameter('cone_target_vote_window').value)
-        self.cone_lane_bias_ratio = float(self.get_parameter('cone_lane_bias_ratio').value)
-        self.cone_recover_time = float(self.get_parameter('cone_recover_time').value)
-        self.cone_recover_confidence = float(self.get_parameter('cone_recover_confidence').value)
         self.cone_accept_states = set([
             str(x).strip().upper()
             for x in self.get_parameter('cone_accept_states').value
@@ -491,12 +444,6 @@ class StanleyMissionFSMNode(Node):
         self.ped_front_angle_deg = float(self.get_parameter('ped_front_angle_deg').value)
         self.ped_front_distance = float(self.get_parameter('ped_front_distance').value)
         self.ped_front_min_hits = int(self.get_parameter('ped_front_min_hits').value)
-        self.ped_line_roi_y_min_ratio = float(self.get_parameter('ped_line_roi_y_min_ratio').value)
-        self.ped_line_roi_y_max_ratio = float(self.get_parameter('ped_line_roi_y_max_ratio').value)
-        self.ped_line_fill_ratio = float(self.get_parameter('ped_line_fill_ratio').value)
-        self.ped_line_min_width_px = int(self.get_parameter('ped_line_min_width_px').value)
-        self.ped_line_min_rows = int(self.get_parameter('ped_line_min_rows').value)
-        self.ped_line_stop_drop_ratio = float(self.get_parameter('ped_line_stop_drop_ratio').value)
 
         self.box_front_angle_deg = float(self.get_parameter('box_front_angle_deg').value)
         self.box_front_stop_distance = float(self.get_parameter('box_front_stop_distance').value)
@@ -510,38 +457,10 @@ class StanleyMissionFSMNode(Node):
         self.box_track_half_width = float(self.get_parameter('box_track_half_width').value)
         self.box_track_min_points = int(self.get_parameter('box_track_min_points').value)
         self.box_wall_width_threshold = float(self.get_parameter('box_wall_width_threshold').value)
-        self.box1_close_side_distance = float(self.get_parameter('box1_close_side_distance').value)
-        self.box1_close_side_min_hits = int(self.get_parameter('box1_close_side_min_hits').value)
-        self.box1_close_wall_width_threshold = float(self.get_parameter('box1_close_wall_width_threshold').value)
-        self.box1_close_wall_x_span = float(self.get_parameter('box1_close_wall_x_span').value)
-        self.box_lshape_near_distance = float(self.get_parameter('box_lshape_near_distance').value)
-        self.box_lshape_min_points = int(self.get_parameter('box_lshape_min_points').value)
-        self.box_lshape_min_x_span = float(self.get_parameter('box_lshape_min_x_span').value)
-        self.box_lshape_min_y_span = float(self.get_parameter('box_lshape_min_y_span').value)
-        self.box_lshape_corner_band = float(self.get_parameter('box_lshape_corner_band').value)
-        self.box_lshape_min_leg_points = int(self.get_parameter('box_lshape_min_leg_points').value)
-        self.box_avoid_hold_time = float(self.get_parameter('box_avoid_hold_time').value)
-        self.box2_track_half_width = float(self.get_parameter('box2_track_half_width').value)
-        self.box2_front_angle_deg = float(self.get_parameter('box2_front_angle_deg').value)
-        self.box2_front_min_hits = int(self.get_parameter('box2_front_min_hits').value)
-        self.box2_side_min_hits = int(self.get_parameter('box2_side_min_hits').value)
-        self.box2_avoid_hold_time = float(self.get_parameter('box2_avoid_hold_time').value)
-        self.box2_extra_yaw = float(self.get_parameter('box2_extra_yaw').value)
-        self.box2_left_fallback_enabled = bool(self.get_parameter('box2_left_fallback_enabled').value)
 
         self.tunnel_enter_frames = int(self.get_parameter('tunnel_enter_frames').value)
-        self.tunnel_exit_frames = int(self.get_parameter('tunnel_exit_frames').value)
         self.tunnel_enter_min_time = float(self.get_parameter('tunnel_enter_min_time').value)
         self.tunnel_memory_min_time = float(self.get_parameter('tunnel_memory_min_time').value)
-        self.tunnel_wall_distance = float(self.get_parameter('tunnel_wall_distance').value)
-        self.tunnel_wall_min_y = float(self.get_parameter('tunnel_wall_min_y').value)
-        self.tunnel_wall_x_min = float(self.get_parameter('tunnel_wall_x_min').value)
-        self.tunnel_wall_x_max = float(self.get_parameter('tunnel_wall_x_max').value)
-        self.tunnel_wall_min_hits = int(self.get_parameter('tunnel_wall_min_hits').value)
-        self.tunnel_exit_drive_distance = float(self.get_parameter('tunnel_exit_drive_distance').value)
-        self.tunnel_approach_force_right = bool(self.get_parameter('tunnel_approach_force_right').value)
-        self.tunnel_approach_right_yaw = float(self.get_parameter('tunnel_approach_right_yaw').value)
-        self.tunnel_approach_speed_limit = float(self.get_parameter('tunnel_approach_speed_limit').value)
 
         self.rotary_front_x_min = float(self.get_parameter('rotary_front_x_min').value)
         self.rotary_front_x_max = float(self.get_parameter('rotary_front_x_max').value)
@@ -611,15 +530,10 @@ class StanleyMissionFSMNode(Node):
         self.red_db = FrameDebouncer(4, 6)
         self.green_db = FrameDebouncer(4, 6)
         self.ped_db = FrameDebouncer(2, 6)
-        self.ped_line_db = FrameDebouncer(2, 3)
         self.box_db = FrameDebouncer(2, 6)
         self.rotary_db = FrameDebouncer(3, 6)
         self.finish_db = FrameDebouncer(5, 8)
 
-        self.ped_stop_line_was_seen = False
-        self.ped_waiting_after_line = False
-        self.ped_stop_line_ratio = 0.0
-        self.ped_stop_line_peak_ratio = 0.0
         self.pedestrian_was_seen = False
         self.last_ped_clear_time = None
 
@@ -632,7 +546,6 @@ class StanleyMissionFSMNode(Node):
         self.tunnel_recover_count = 0
         self.tunnel_candidate_count = 0
         self.tunnel_seen_time = None
-        self.tunnel_exit_start_time = None
 
         self.rotary_vehicle_seen = False
         self.rotary_clear_start = None
@@ -643,11 +556,8 @@ class StanleyMissionFSMNode(Node):
         self.cone_latched = False
         self.cone_latched_lanes = set()
         self.cone_target_lane = 'center'
-        self.cone_target_locked = False
-        self.cone_target_votes = []
         self.cone_first_latch_time = None
         self.last_cone_msg_time = 0.0
-        self.cone_recover_start_time = None
 
         self.parking_started = False
         self.parking_step_index = 0
@@ -1506,14 +1416,7 @@ class StanleyMissionFSMNode(Node):
     def reset_state_local_vars(self, new_state):
         self.current_lane_bias_px = 0.0
 
-        self.ped_stop_line_was_seen = False
-        self.ped_waiting_after_line = False
-        self.ped_stop_line_ratio = 0.0
-        self.ped_stop_line_peak_ratio = 0.0
-        self.pedestrian_was_seen = False
         self.last_ped_clear_time = None
-        self.ped_db.reset()
-        self.ped_line_db.reset()
 
         self.box_avoid_started = False
         self.box_clear_start = None
@@ -1526,7 +1429,6 @@ class StanleyMissionFSMNode(Node):
         self.tunnel_recover_count = 0
         self.tunnel_candidate_count = 0
         self.tunnel_seen_time = None
-        self.tunnel_exit_start_time = None
 
         self.rotary_clear_start = None
         self.rotary_vehicle_distance = 9.9
@@ -1539,17 +1441,11 @@ class StanleyMissionFSMNode(Node):
             self.cone_latched = False
             self.cone_latched_lanes = set()
             self.cone_target_lane = 'center'
-            self.cone_target_locked = False
-            self.cone_target_votes = []
             self.cone_first_latch_time = None
             self.last_cone_msg_time = 0.0
-            self.cone_recover_start_time = None
 
         # CONE에 들어올 때는 ROTARY에서 이미 저장한 고깔 정보를 유지해야 한다.
         # 따라서 여기서 cone latch를 지우지 않는다.
-        if new_state == Mission.CONE:
-            self.cone_target_locked = False
-            self.cone_recover_start_time = None
 
         self.parking_started = False
         self.parking_step_index = 0
@@ -1607,10 +1503,7 @@ class StanleyMissionFSMNode(Node):
             self.cone_latched = False
             self.cone_latched_lanes = set()
             self.cone_target_lane = 'center'
-            self.cone_target_locked = False
-            self.cone_target_votes = []
             self.cone_first_latch_time = None
-            self.cone_recover_start_time = None
             self.get_logger().warn('cone latch reset by manual command')
         elif cmd in aliases:
             self.set_state(aliases[cmd], '(manual set)')
@@ -1796,179 +1689,17 @@ class StanleyMissionFSMNode(Node):
             }
         return None
 
-    def cluster_has_l_shape(self, cluster):
+    def box_cluster_obstacle(self):
         """
-        박스 L-shape 판정.
-        라이다에서 박스 모서리가 보이면 보통 전면 + 측면 두 방향의 점들이 함께 찍힌다.
-        그래서 아래 조건을 모두 만족할 때 L-shape 후보로 본다.
+        박스 판단 기준(v5):
+        1) LiDAR 클러스터가 현재 주행 중인 트랙 corridor에 걸쳐 있어야 한다.
+        2) 그 클러스터 안의 점들이 사용자가 설정한 LiDAR 각도 영역에 들어와야 한다.
+        3) 벽처럼 긴 클러스터는 제외한다.
 
-        1) 10cm 이내의 매우 가까운 점이 있어야 함.
-        2) 전체 점 개수가 충분해야 함.
-        3) x 방향, y 방향 span이 모두 일정 이상이어야 함.
-        4) min_x 근처 전면 leg와 min_y 또는 max_y 근처 측면 leg가 각각 충분히 있어야 함.
-        """
-        if cluster is None:
-            return False, {}
-
-        x_span = cluster.max_x - cluster.min_x
-        y_span = cluster.max_y - cluster.min_y
-
-        near_points = [p for p in cluster.points if p[2] <= self.box_lshape_near_distance]
-        if len(near_points) == 0:
-            return False, {
-                'reason': 'near_fail',
-                'near_points': 0,
-                'x_span': x_span,
-                'y_span': y_span,
-            }
-
-        if cluster.count < self.box_lshape_min_points:
-            return False, {
-                'reason': 'count_fail',
-                'near_points': len(near_points),
-                'x_span': x_span,
-                'y_span': y_span,
-            }
-
-        if x_span < self.box_lshape_min_x_span or y_span < self.box_lshape_min_y_span:
-            return False, {
-                'reason': 'span_fail',
-                'near_points': len(near_points),
-                'x_span': x_span,
-                'y_span': y_span,
-            }
-
-        band = self.box_lshape_corner_band
-
-        # 전면 leg: 차량에서 가장 가까운 x면 근처의 점들
-        front_leg_count = 0
-        # 좌/우 측면 leg: y 최소/최대 경계 근처 점들 중 더 강한 쪽
-        side_min_count = 0
-        side_max_count = 0
-
-        for x, y, _, _ in cluster.points:
-            if x <= cluster.min_x + band:
-                front_leg_count += 1
-            if y <= cluster.min_y + band:
-                side_min_count += 1
-            if y >= cluster.max_y - band:
-                side_max_count += 1
-
-        side_leg_count = max(side_min_count, side_max_count)
-
-        l_shape = (
-            front_leg_count >= self.box_lshape_min_leg_points and
-            side_leg_count >= self.box_lshape_min_leg_points
-        )
-
-        info = {
-            'reason': 'ok' if l_shape else 'leg_fail',
-            'near_points': len(near_points),
-            'x_span': x_span,
-            'y_span': y_span,
-            'front_leg_count': front_leg_count,
-            'side_leg_count': side_leg_count,
-            'side_min_count': side_min_count,
-            'side_max_count': side_max_count,
-        }
-
-        return l_shape, info
-
-    def box1_close_side_obstacle(self):
-        best = None
-        front_angle_deg = self.box_front_angle_deg
-
-        for cluster in self.lidar_clusters:
-            if cluster.count < self.box1_close_side_min_hits:
-                continue
-            if cluster.nearest > self.box1_close_side_distance:
-                continue
-            if cluster.width > self.box1_close_wall_width_threshold:
-                continue
-            if (cluster.max_x - cluster.min_x) > self.box1_close_wall_x_span:
-                continue
-
-            left_hits = 0
-            right_hits = 0
-            left_min = 9.9
-            right_min = 9.9
-
-            for _, y, dist, angle in cluster.points:
-                if dist > self.box1_close_side_distance:
-                    continue
-
-                angle_deg = math.degrees(angle)
-                while angle_deg > 180.0:
-                    angle_deg -= 360.0
-                while angle_deg < -180.0:
-                    angle_deg += 360.0
-
-                if -front_angle_deg <= angle_deg <= front_angle_deg:
-                    continue
-
-                if y >= self.path_center_y_m:
-                    left_hits += 1
-                    left_min = min(left_min, dist)
-                else:
-                    right_hits += 1
-                    right_min = min(right_min, dist)
-
-            if left_hits < self.box1_close_side_min_hits and right_hits < self.box1_close_side_min_hits:
-                continue
-
-            if left_hits >= self.box1_close_side_min_hits and right_hits >= self.box1_close_side_min_hits:
-                sector = 'left' if left_min <= right_min else 'right'
-                nearest = min(left_min, right_min)
-                hits = max(left_hits, right_hits)
-            elif left_hits >= self.box1_close_side_min_hits:
-                sector = 'left'
-                nearest = left_min
-                hits = left_hits
-            else:
-                sector = 'right'
-                nearest = right_min
-                hits = right_hits
-
-            candidate = {
-                'sector': sector,
-                'nearest': nearest,
-                'hits': hits,
-                'cluster': cluster,
-                'cx': cluster.cx,
-                'cy': cluster.cy,
-                'width': cluster.width,
-                'path_y': self.path_center_y_m,
-                'l_shape': {'reason': 'box1_close_side'},
-            }
-
-            if best is None or candidate['nearest'] < best['nearest']:
-                best = candidate
-
-        return best
-
-    def box_cluster_obstacle(self, box_profile='box1'):
-        """
-        박스 판단 기준(v6):
-        1) 현재 주행 중인 트랙 corridor에 걸친 LiDAR 클러스터여야 한다.
-        2) 설정한 LiDAR 각도 영역과 겹쳐야 한다.
-        3) 10cm 이내의 가까운 점이 있어야 한다.
-        4) L-shape 특징이 있어야 한다.
-        5) 이 L-shape 후보가 사라져야 박스 회피 완료로 판단한다.
+        이렇게 해야 단순히 좌/우 각도에 보이는 다른 트랙 장애물이 박스로 오인되는 일을 줄일 수 있다.
         """
         best = None
         path_y = self.path_center_y_m
-        is_box2 = box_profile == 'box2'
-
-        if not is_box2:
-            close_candidate = self.box1_close_side_obstacle()
-            if close_candidate is not None:
-                self.box_track_candidate = close_candidate
-                return close_candidate
-
-        track_half_width = self.box2_track_half_width if is_box2 else self.box_track_half_width
-        front_angle_deg = self.box2_front_angle_deg if is_box2 else self.box_front_angle_deg
-        front_min_hits = self.box2_front_min_hits if is_box2 else self.box_front_min_hits
-        side_min_hits = self.box2_side_min_hits if is_box2 else self.box_side_min_hits
 
         for cluster in self.lidar_clusters:
             if cluster.count < self.box_track_min_points:
@@ -1981,10 +1712,11 @@ class StanleyMissionFSMNode(Node):
                 continue
 
             # 현재 주행 경로 corridor와 실제로 겹치는지 확인한다.
-            corridor_min = path_y - track_half_width
-            corridor_max = path_y + track_half_width
+            # cluster 중심만 보는 것보다 min_y/max_y까지 보아 트랙 라인을 걸친 박스를 더 안정적으로 잡는다.
+            corridor_min = path_y - self.box_track_half_width
+            corridor_max = path_y + self.box_track_half_width
             overlaps_corridor = not (cluster.max_y < corridor_min or cluster.min_y > corridor_max)
-            center_in_corridor = abs(cluster.cy - path_y) <= track_half_width
+            center_in_corridor = abs(cluster.cy - path_y) <= self.box_track_half_width
             if not (overlaps_corridor or center_in_corridor):
                 continue
 
@@ -2002,7 +1734,7 @@ class StanleyMissionFSMNode(Node):
                 while angle_deg < -180.0:
                     angle_deg += 360.0
 
-                if -front_angle_deg <= angle_deg <= front_angle_deg:
+                if -self.box_front_angle_deg <= angle_deg <= self.box_front_angle_deg:
                     if dist <= self.box_front_stop_distance:
                         front_hits += 1
                         front_min = min(front_min, dist)
@@ -2015,42 +1747,17 @@ class StanleyMissionFSMNode(Node):
                         right_hits += 1
                         right_min = min(right_min, dist)
 
-            l_shape, l_info = self.cluster_has_l_shape(cluster)
-            if not l_shape:
-                if (
-                    is_box2 and
-                    self.box2_left_fallback_enabled and
-                    cluster.cy >= path_y and
-                    left_hits >= side_min_hits
-                ):
-                    candidate = {
-                        'sector': 'left',
-                        'nearest': left_min,
-                        'hits': left_hits,
-                        'cluster': cluster,
-                        'cx': cluster.cx,
-                        'cy': cluster.cy,
-                        'width': cluster.width,
-                        'path_y': path_y,
-                        'l_shape': {'reason': 'box2_left_side_fallback'},
-                    }
-
-                    if best is None or candidate['nearest'] < best['nearest']:
-                        best = candidate
-
-                continue
-
             sector = None
             nearest = cluster.nearest
             hits = 0
 
             # 좌/우 각도 조건이 있으면 회피 방향 판단에 우선 사용한다.
-            if left_hits >= side_min_hits or right_hits >= side_min_hits:
-                if left_hits >= side_min_hits and right_hits >= side_min_hits:
+            if left_hits >= self.box_side_min_hits or right_hits >= self.box_side_min_hits:
+                if left_hits >= self.box_side_min_hits and right_hits >= self.box_side_min_hits:
                     sector = 'left' if left_min <= right_min else 'right'
                     nearest = min(left_min, right_min)
                     hits = max(left_hits, right_hits)
-                elif left_hits >= side_min_hits:
+                elif left_hits >= self.box_side_min_hits:
                     sector = 'left'
                     nearest = left_min
                     hits = left_hits
@@ -2058,8 +1765,8 @@ class StanleyMissionFSMNode(Node):
                     sector = 'right'
                     nearest = right_min
                     hits = right_hits
-            elif front_hits >= front_min_hits:
-                # 전방에만 걸린 경우도 L-shape이면 박스 후보로 인정한다.
+            elif front_hits >= self.box_front_min_hits:
+                # 전방에만 걸린 경우도 박스 후보로 인정한다.
                 # 방향은 cluster가 현재 경로 중심보다 어느 쪽에 치우쳤는지로 정한다.
                 if cluster.cy >= path_y:
                     sector = 'left'
@@ -2079,7 +1786,6 @@ class StanleyMissionFSMNode(Node):
                 'cy': cluster.cy,
                 'width': cluster.width,
                 'path_y': path_y,
-                'l_shape': l_info,
             }
 
             if best is None or candidate['nearest'] < best['nearest']:
@@ -2088,12 +1794,12 @@ class StanleyMissionFSMNode(Node):
         self.box_track_candidate = best
         return best
 
-    def box_sector_obstacle(self, box_profile='box1'):
+    def box_sector_obstacle(self):
         # v5부터는 단순 각도 sector만으로 박스를 판단하지 않는다.
         # 현재 주행 트랙 corridor에 걸친 클러스터 + 각도 조건을 동시에 만족해야 한다.
-        return self.box_cluster_obstacle(box_profile)
-    def obstacle_in_box_roi(self, box_profile='box1'):
-        return self.box_sector_obstacle(box_profile)
+        return self.box_cluster_obstacle()
+    def obstacle_in_box_roi(self):
+        return self.box_sector_obstacle()
 
     def rotary_vehicle_candidate(self):
         # 사용자가 보낸 TrackVehicleFollowNode의 find_lead_vehicle 구조를 반영한다.
@@ -2198,72 +1904,6 @@ class StanleyMissionFSMNode(Node):
         detected = ratio > self.parking_finish_ratio
         return self.finish_db.update(detected), ratio
 
-    def detect_pedestrian_stop_line(self, mask, lane_data):
-        if mask is None:
-            self.ped_stop_line_ratio = 0.0
-            return False
-
-        h, w = mask.shape
-        y0 = int(h * self.ped_line_roi_y_min_ratio)
-        y1 = int(h * self.ped_line_roi_y_max_ratio)
-        y0 = clamp(y0, 0, h - 1)
-        y1 = clamp(y1, y0 + 1, h)
-
-        max_fill_ratio = 0.0
-        max_run = 0
-        run = 0
-
-        for y in range(y0, y1):
-            x0, x1 = self.pedestrian_stop_line_x_range(y, w, lane_data)
-            width = x1 - x0
-
-            if width < self.ped_line_min_width_px:
-                run = 0
-                continue
-
-            row = mask[y, x0:x1]
-            fill_ratio = cv2.countNonZero(row) / float(width)
-            max_fill_ratio = max(max_fill_ratio, fill_ratio)
-
-            if fill_ratio >= self.ped_line_fill_ratio:
-                run += 1
-                max_run = max(max_run, run)
-            else:
-                run = 0
-
-        self.ped_stop_line_ratio = max_fill_ratio
-        return max_run >= self.ped_line_min_rows
-
-    def pedestrian_stop_line_x_range(self, y, image_width, lane_data):
-        if lane_data is not None:
-            left_fit = lane_data.get('left_fit')
-            right_fit = lane_data.get('right_fit')
-
-            if left_fit is not None and right_fit is not None:
-                left_x = int(poly_x(left_fit, y))
-                right_x = int(poly_x(right_fit, y))
-
-                if right_x < left_x:
-                    left_x, right_x = right_x, left_x
-
-                margin = int(max(10, self.last_lane_width * 0.08))
-                x0 = clamp(left_x + margin, 0, image_width - 1)
-                x1 = clamp(right_x - margin, x0 + 1, image_width)
-                return int(x0), int(x1)
-
-            center_fit = lane_data.get('center_fit')
-            if center_fit is not None:
-                center_x = int(poly_x(center_fit, y))
-            else:
-                center_x = image_width // 2
-        else:
-            center_x = image_width // 2
-
-        half_width = int(max(self.ped_line_min_width_px / 2.0, self.last_lane_width * 0.34))
-        x0 = clamp(center_x - half_width, 0, image_width - 1)
-        x1 = clamp(center_x + half_width, x0 + 1, image_width)
-        return int(x0), int(x1)
-
     def cone_callback(self, msg):
         # ROTARY 상태에 들어오기 전까지 들어오는 고깔 정보는 전부 버린다.
         # 이유: 다른 트랙 구간에서도 고깔이 카메라에 잡힐 수 있기 때문이다.
@@ -2281,9 +1921,6 @@ class StanleyMissionFSMNode(Node):
         if len(lanes) == 0:
             return
 
-        vote = self.infer_cone_target_from_lanes(lanes)
-        self.record_cone_target_vote(vote)
-
         # 핵심: ROTARY/CONE 상태에서 한 번이라도 본 고깔 차선은 CONE 상태가 끝날 때까지 유지한다.
         self.cone_latched_lanes |= lanes
         self.cone_latched = True
@@ -2292,52 +1929,14 @@ class StanleyMissionFSMNode(Node):
         if self.cone_first_latch_time is None:
             self.cone_first_latch_time = self.last_cone_msg_time
 
-        if not self.cone_target_locked:
-            self.cone_target_lane = self.choose_cone_target_lane(self.cone_latched_lanes)
+        self.cone_target_lane = self.choose_cone_target_lane(self.cone_latched_lanes)
 
         self.get_logger().warn(
             f'cone latch update: raw={raw}, latched={sorted(list(self.cone_latched_lanes))}, '
-            f'target={self.cone_target_lane}, votes={self.cone_target_votes}'
+            f'target={self.cone_target_lane}'
         )
 
-    def infer_cone_target_from_lanes(self, lanes):
-        if 'center' in lanes and 'left' in lanes and 'right' not in lanes:
-            return 'right'
-        if 'center' in lanes and 'right' in lanes and 'left' not in lanes:
-            return 'left'
-        if 'left' in lanes and 'right' not in lanes:
-            return 'right'
-        if 'right' in lanes and 'left' not in lanes:
-            return 'left'
-        return 'center'
-
-    def record_cone_target_vote(self, target_lane):
-        if target_lane not in ('left', 'right', 'center'):
-            return
-
-        self.cone_target_votes.append(target_lane)
-        max_len = max(self.cone_target_vote_window, 1)
-        if len(self.cone_target_votes) > max_len:
-            self.cone_target_votes = self.cone_target_votes[-max_len:]
-
-    def choose_cone_target_from_votes(self):
-        left_count = self.cone_target_votes.count('left')
-        right_count = self.cone_target_votes.count('right')
-
-        if left_count > right_count:
-            return 'left'
-        if right_count > left_count:
-            return 'right'
-
-        for target in reversed(self.cone_target_votes):
-            if target in ('left', 'right'):
-                return target
-
-        return 'center'
-
     def choose_cone_target_lane(self, lanes):
-        if 'left' in lanes and 'right' in lanes:
-            return self.choose_cone_target_from_votes()
         if 'center' in lanes and 'left' in lanes:
             return 'right'
         if 'center' in lanes and 'right' in lanes:
@@ -2425,12 +2024,12 @@ class StanleyMissionFSMNode(Node):
         red_active, green_active, _, _, _ = traffic
         if green_active:
             self.next_state('(green light)')
-            cmd, _ = self.stanley_cmd_from_lane(lane_data)
+            cmd, _ = self.stanley_cmd_from_lane(lane_data, speed_limit=0.30)
             return cmd, 'WAIT_GREEN_GO'
 
         return self.stop_cmd(), 'WAIT_RED_OR_UNKNOWN'
 
-    def handle_pedestrian(self, lane_data, mask=None):
+    def handle_pedestrian(self, lane_data):
         obstacle = self.obstacle_in_pedestrian_roi()
         ped_active = self.ped_db.update(obstacle is not None)
         now = time.monotonic()
@@ -2446,139 +2045,82 @@ class StanleyMissionFSMNode(Node):
             elif now - self.last_ped_clear_time >= self.ped_clear_time:
                 self.next_state('(pedestrian front sector clear stable)')
 
-            cmd, _ = self.stanley_cmd_from_lane(lane_data, speed_limit=self.ped_speed_limit)
-            return cmd, 'PED_CLEAR_GO'
-
         cmd, _ = self.stanley_cmd_from_lane(lane_data, speed_limit=self.ped_speed_limit)
         return cmd, 'PED_SEARCH_FRONT_ONLY'
 
-    def handle_box(self, lane_data, next_state_after_clear=True, box_profile='box1'):
+    def handle_box(self, lane_data, next_state_after_clear=True):
+        obstacle = self.obstacle_in_box_roi()
+        box_active = self.box_db.update(obstacle is not None)
         now = time.monotonic()
-        is_box2 = box_profile == 'box2'
-        avoid_hold_time = self.box2_avoid_hold_time if is_box2 else self.box_avoid_hold_time
-        avoid_yaw = self.box2_extra_yaw if is_box2 else 0.55
 
-        def box_cmd(extra_yaw, fallback_speed=0.24):
-            if lane_data is None:
-                cmd = Twist()
-                cmd.linear.x = fallback_speed
-                cmd.angular.z = clamp(extra_yaw, -MAX_YAW_RATE, MAX_YAW_RATE)
-                return cmd
-
-            cmd, _ = self.stanley_cmd_from_lane(lane_data, extra_yaw=extra_yaw)
-            return cmd
-
-        if not self.box_avoid_started:
-            obstacle = self.obstacle_in_box_roi(box_profile)
-            box_active = self.box_db.update(obstacle is not None)
-
-            # 박스가 차선을 가리면 box_db가 active 되기 전에도 lane_data가 끊길 수 있다.
-            # 이 경우 정지로 빠지지 않도록, 유효한 박스 후보가 있으면 바로 latch한다.
-            if obstacle is not None and lane_data is None:
-                box_active = True
-
-            if not (box_active and obstacle is not None):
-                if lane_data is None:
-                    return self.memory_lane_cmd(False), 'BOX_SEARCH_LANE_MEMORY'
-
-                cmd, _ = self.stanley_cmd_from_lane(lane_data)
-                return cmd, 'BOX_SEARCH_TRACK_CORRIDOR'
-
+        if box_active and obstacle is not None:
             sector = obstacle['sector']
-            self.box_seen_time = now
+
+            if not self.box_avoid_started:
+                self.box_seen_time = now
+
             self.box_avoid_started = True
             self.box_clear_start = None
 
             if sector == 'left':
                 # 현재 트랙 corridor에 걸친 박스가 좌측/좌전방에 걸림 → 오른쪽 회피
                 self.last_box_side = 1.0
+                extra_yaw = -0.55
                 status = (
-                    f'{box_profile.upper()}_TRACK_AVOID_RIGHT d={obstacle["nearest"]:.2f} '
+                    f'BOX_TRACK_AVOID_RIGHT d={obstacle["nearest"]:.2f} '
                     f'cy={obstacle["cy"]:.2f} path={obstacle["path_y"]:.2f}'
                 )
             else:
                 # 현재 트랙 corridor에 걸친 박스가 우측/우전방에 걸림 → 왼쪽 회피
                 self.last_box_side = -1.0
+                extra_yaw = 0.55
                 status = (
-                    f'{box_profile.upper()}_TRACK_AVOID_LEFT d={obstacle["nearest"]:.2f} '
+                    f'BOX_TRACK_AVOID_LEFT d={obstacle["nearest"]:.2f} '
                     f'cy={obstacle["cy"]:.2f} path={obstacle["path_y"]:.2f}'
                 )
 
-            extra_yaw = -avoid_yaw if self.last_box_side > 0.0 else avoid_yaw
-            cmd = box_cmd(extra_yaw, fallback_speed=0.24)
+            cmd, _ = self.stanley_cmd_from_lane(
+                lane_data,
+                speed_limit=self.avoid_speed_limit,
+                extra_yaw=extra_yaw,
+            )
             return cmd, status
 
-        avoid_elapsed = now - self.box_seen_time if self.box_seen_time is not None else 0.0
+        if self.box_avoid_started:
+            if self.box_clear_start is None:
+                self.box_clear_start = now
 
-        if avoid_elapsed < avoid_hold_time:
-            extra_yaw = -avoid_yaw if self.last_box_side > 0.0 else avoid_yaw
-            cmd = box_cmd(extra_yaw, fallback_speed=0.24)
-            direction = 'RIGHT' if self.last_box_side > 0.0 else 'LEFT'
-            return cmd, f'{box_profile.upper()}_LATCH_AVOID_{direction} {avoid_elapsed:.1f}/{avoid_hold_time:.1f}s'
+            clear_ok = (now - self.box_clear_start) >= self.box_clear_time
+            time_ok = self.state_elapsed() >= self.box_min_time
 
-        if self.obstacle_in_box_roi(box_profile) is None:
-            self.next_state(f'({box_profile} close obstacle passed)')
+            # 회피 후 즉시 직진으로 복귀하지 않고 반대 조향으로 천천히 복귀한다.
             recover_yaw = 0.18 * self.last_box_side
-            cmd = box_cmd(recover_yaw, fallback_speed=0.20)
-            return cmd, f'{box_profile.upper()}_PASSED_FAST_CLEAR'
+            cmd, _ = self.stanley_cmd_from_lane(
+                lane_data,
+                speed_limit=self.box_speed_limit,
+                extra_yaw=recover_yaw,
+            )
 
-        if self.box_clear_start is None:
-            self.box_clear_start = now
+            if next_state_after_clear and clear_ok and time_ok:
+                self.next_state('(box track-corridor obstacle clear stable)')
 
-        clear_ok = (now - self.box_clear_start) >= self.box_clear_time
+            return cmd, f'BOX_RECOVER clear={0.0 if self.box_clear_start is None else now - self.box_clear_start:.1f}s'
 
-        # 회피 후 즉시 직진으로 복귀하지 않고 반대 조향으로 천천히 복귀한다.
-        recover_yaw = 0.18 * self.last_box_side
-        cmd = box_cmd(recover_yaw, fallback_speed=0.20)
-
-        if next_state_after_clear and clear_ok:
-            self.next_state('(box latch avoid and recover complete)')
-
-        return cmd, f'BOX_RECOVER clear={0.0 if self.box_clear_start is None else now - self.box_clear_start:.1f}s'
-    def tunnel_wall_state(self):
-        left_hits = 0
-        right_hits = 0
-        left_min = 9.9
-        right_min = 9.9
-
-        for x, y, dist, _ in self.lidar_points:
-            if not (self.tunnel_wall_x_min <= x <= self.tunnel_wall_x_max):
-                continue
-            if abs(y) < self.tunnel_wall_min_y:
-                continue
-            if abs(y) > self.tunnel_wall_distance:
-                continue
-
-            if y > 0.0:
-                left_hits += 1
-                left_min = min(left_min, abs(y))
-            else:
-                right_hits += 1
-                right_min = min(right_min, abs(y))
-
-        left_wall = left_hits >= self.tunnel_wall_min_hits
-        right_wall = right_hits >= self.tunnel_wall_min_hits
-
-        return {
-            'inside': left_wall and right_wall,
-            'left_hits': left_hits,
-            'right_hits': right_hits,
-            'left_min': left_min,
-            'right_min': right_min,
-        }
-
+        cmd, _ = self.stanley_cmd_from_lane(lane_data, speed_limit=self.box_speed_limit)
+        return cmd, 'BOX_SEARCH_TRACK_CORRIDOR'
     def handle_tunnel(self, lane_data, tunnel_like):
         """
-        터널 판단:
-        카메라 밝기/차선 소실 대신 LiDAR 좌우 30cm 이내 벽을 기준으로 진입/탈출을 판단한다.
-        터널이 짧으므로 기본 2프레임만 안정화하고, 양쪽 벽이 사라지면 빠르게 다음 상태로 넘긴다.
+        터널 판단(v5):
+        기존 기준은 맞다. 즉, 밝기가 낮고 흰색 라인이 부족하면 tunnel_like로 본다.
+        다만 v4에서는 TUNNEL 상태에 들어온 직후 한 프레임만 tunnel_like이거나 lane_data가 None이어도
+        터널에 들어갔다가 나온 것으로 처리될 수 있었다. 그래서 v5에서는 연속 프레임 gate를 둔다.
         """
         now = time.monotonic()
-        wall = self.tunnel_wall_state()
-        wall_inside = wall['inside']
+        lane_bad = lane_data is None or lane_data.get('confidence', 0.0) < 0.55
+        tunnel_candidate = tunnel_like and lane_bad
 
         if not self.tunnel_was_seen:
-            if wall_inside and self.state_elapsed() >= self.tunnel_enter_min_time:
+            if tunnel_candidate and self.state_elapsed() >= self.tunnel_enter_min_time:
                 self.tunnel_candidate_count += 1
             else:
                 self.tunnel_candidate_count = 0
@@ -2587,85 +2129,41 @@ class StanleyMissionFSMNode(Node):
                 self.tunnel_was_seen = True
                 self.tunnel_seen_time = now
                 self.tunnel_recover_count = 0
-                return self.memory_lane_cmd(tunnel_like=True), (
-                    f'TUNNEL_WALL_ENTER L{wall["left_hits"]} R{wall["right_hits"]}'
-                )
+                return self.memory_lane_cmd(tunnel_like=True), 'TUNNEL_ENTER_CONFIRMED'
 
-            if self.tunnel_approach_force_right and not wall_inside:
-                if lane_data is None:
-                    cmd = Twist()
-                    cmd.linear.x = min(0.20, self.tunnel_approach_speed_limit)
-                    cmd.angular.z = -abs(self.tunnel_approach_right_yaw)
-                else:
-                    cmd, _ = self.stanley_cmd_from_lane(
-                        lane_data,
-                        speed_limit=self.tunnel_approach_speed_limit,
-                        extra_yaw=-abs(self.tunnel_approach_right_yaw),
-                    )
-
-                return cmd, (
-                    f'TUNNEL_APPROACH_FORCE_RIGHT {self.tunnel_candidate_count}/{self.tunnel_enter_frames} '
-                    f'L{wall["left_hits"]} R{wall["right_hits"]}'
-                )
-
+            # 아직 터널 진입이 확정되지 않았으면 기존 Stanley 주행을 유지한다.
             if lane_data is None:
-                return self.memory_lane_cmd(tunnel_like=False), (
-                    f'TUNNEL_WALL_APPROACH_LOST {self.tunnel_candidate_count}/{self.tunnel_enter_frames} '
-                    f'L{wall["left_hits"]} R{wall["right_hits"]}'
-                )
+                return self.memory_lane_cmd(tunnel_like=False), f'TUNNEL_APPROACH_LOST_WAIT_{self.tunnel_candidate_count}'
 
-            cmd, _ = self.stanley_cmd_from_lane(lane_data)
-            return cmd, (
-                f'TUNNEL_WALL_APPROACH {self.tunnel_candidate_count}/{self.tunnel_enter_frames} '
-                f'L{wall["left_hits"]} R{wall["right_hits"]}'
-            )
+            cmd, _ = self.stanley_cmd_from_lane(lane_data, speed_limit=0.34)
+            return cmd, f'TUNNEL_APPROACH_{self.tunnel_candidate_count}/{self.tunnel_enter_frames}'
 
-        if wall_inside:
+        # 터널 진입이 확정된 뒤에는 lane이 사라지거나 tunnel_like이면 memory 직진을 수행한다.
+        if lane_data is None or tunnel_like:
             self.tunnel_recover_count = 0
-            self.tunnel_exit_start_time = None
-            return self.memory_lane_cmd(tunnel_like=True), (
-                f'TUNNEL_WALL_MEMORY L{wall["left_hits"]} R{wall["right_hits"]}'
-            )
+            return self.memory_lane_cmd(tunnel_like=True), 'TUNNEL_MEMORY'
 
-        self.tunnel_recover_count += 1
+        cmd, _ = self.stanley_cmd_from_lane(lane_data, speed_limit=0.34)
 
         memory_time_ok = True
         if self.tunnel_seen_time is not None:
             memory_time_ok = (now - self.tunnel_seen_time) >= self.tunnel_memory_min_time
 
-        if lane_data is None:
-            cmd = self.memory_lane_cmd(tunnel_like=False)
-        else:
-            cmd, _ = self.stanley_cmd_from_lane(lane_data)
+        if self.state_elapsed() >= self.tunnel_min_time and memory_time_ok:
+            if lane_data['confidence'] >= 0.65:
+                self.tunnel_recover_count += 1
+            else:
+                self.tunnel_recover_count = 0
 
-        if memory_time_ok and self.tunnel_recover_count >= self.tunnel_exit_frames:
-            if self.tunnel_exit_start_time is None:
-                self.tunnel_exit_start_time = now
+            if self.tunnel_recover_count >= self.tunnel_recover_frames:
+                self.next_state('(tunnel lane recovered stable)')
 
-            exit_drive_time = self.tunnel_exit_drive_distance / max(TUNNEL_SPEED, 0.10)
-            exit_elapsed = now - self.tunnel_exit_start_time
-
-            if exit_elapsed >= exit_drive_time:
-                self.next_state('(tunnel exit drive distance reached)')
-                return self.stop_cmd(), 'TUNNEL_EXIT_DELAY_DONE_STOP'
-
-            cmd.linear.x = min(cmd.linear.x, TUNNEL_SPEED)
-            return cmd, (
-                f'TUNNEL_EXIT_DELAY {exit_elapsed:.1f}/{exit_drive_time:.1f}s '
-                f'L{wall["left_hits"]} R{wall["right_hits"]}'
-            )
-
-        return cmd, (
-            f'TUNNEL_WALL_EXIT {self.tunnel_recover_count}/{self.tunnel_exit_frames} '
-            f'L{wall["left_hits"]} R{wall["right_hits"]}'
-        )
+        return cmd, f'TUNNEL_RECOVER_{self.tunnel_recover_count}/{self.tunnel_recover_frames}'
     def rotary_cmd_from_lane(self, lane_data, speed_limit, extra_yaw=0.0):
         """
         사용자가 보낸 TrackVehicleFollowNode의 apply_follow_limit 구조를 ROTARY 상태에만 적용한다.
         CLEAR/LEAD_AHEAD에서는 기본 Stanley 속도에 clear_speed_gain을 곱한 뒤 speed_limit로 제한한다.
         """
-        speed_limit = min(speed_limit, self.rotary_speed_limit)
-
         if speed_limit <= 0.0:
             return self.stop_cmd(), None
 
@@ -2703,33 +2201,8 @@ class StanleyMissionFSMNode(Node):
         now = time.monotonic()
 
         # 요구사항 반영:
-        # 1) 회전교차로에서는 차량을 반드시 한 번 인식해야 출발한다.
-        # 2) 이후 회전 구간을 rotary_min_time(기본 4초) 이상 지속하고,
-        #    ROTARY 상태에서 고깔 latch가 들어오면 회전교차로 완료로 판단한다.
-        rotary_time_ok = self.state_elapsed() >= self.rotary_min_time
-        cone_seen_ok = self.cone_latched
-        complete_ok = self.rotary_vehicle_seen and rotary_time_ok and cone_seen_ok
-
-        if complete_ok:
-            if cluster is not None:
-                self.rotary_vehicle_seen = True
-                self.rotary_clear_start = None
-                self.rotary_vehicle_distance = cluster.nearest
-                self.rotary_follow_status = 'CONE_READY_WAIT_VEHICLE'
-                return self.stop_cmd(), (
-                    f'ROTARY_CONE_READY_WAIT_VEHICLE_{cluster.nearest:.2f}m '
-                    f'cone={self.cone_latched} t={self.state_elapsed():.1f}s'
-                )
-
-            self.next_state('(rotary >= 4s and cone latched)')
-            # 상태 전환 직후에도 이번 frame의 cmd는 안전하게 Stanley 기반으로 한 번 더 보낸다.
-            speed_limit = self.compute_rotary_speed_limit(cluster if active else None)
-            if speed_limit <= 0.0:
-                return self.stop_cmd(), 'ROTARY_DONE_BUT_LEAD_STOP'
-            cmd, _ = self.rotary_cmd_from_lane(lane_data, speed_limit=speed_limit)
-            return cmd, 'ROTARY_DONE_CONE_SEEN'
-
-        # 차량을 보기 전에는 정지 또는 설정한 아주 낮은 속도로만 creep한다.
+        # 회전교차로에서는 차량을 반드시 한 번 인식해야 한다.
+        # 인식 전에는 정지 또는 설정한 아주 낮은 속도로만 creep한다.
         if not self.rotary_vehicle_seen and not active:
             self.rotary_follow_status = 'WAIT_VEHICLE'
             if self.rotary_wait_before_seen_speed <= 0.0:
@@ -2748,40 +2221,33 @@ class StanleyMissionFSMNode(Node):
 
             speed_limit = self.compute_rotary_speed_limit(cluster)
             if speed_limit <= 0.0:
-                return self.stop_cmd(), (
-                    f'ROTARY_{self.rotary_follow_status}_{cluster.nearest:.2f}m '
-                    f'cone={self.cone_latched} t={self.state_elapsed():.1f}s'
-                )
+                return self.stop_cmd(), f'ROTARY_{self.rotary_follow_status}_{cluster.nearest:.2f}m'
 
             cmd, _ = self.rotary_cmd_from_lane(lane_data, speed_limit=speed_limit)
-            return cmd, (
-                f'ROTARY_{self.rotary_follow_status}_{cluster.nearest:.2f}m '
-                f'cone={self.cone_latched} t={self.state_elapsed():.1f}s'
-            )
+            return cmd, f'ROTARY_{self.rotary_follow_status}_{cluster.nearest:.2f}m'
 
-        # 여기까지 왔다는 것은 차량을 한 번 봤고, 현재는 차량 후보가 clear라는 뜻이다.
+        # 여기까지 왔다는 것은 차량을 한 번 봤고, 현재는 clear 상태라는 뜻이다.
         if self.rotary_clear_start is None:
             self.rotary_clear_start = now
 
+        clear_ok = (now - self.rotary_clear_start) >= self.rotary_clear_time
+        time_ok = self.state_elapsed() >= self.rotary_min_time
+        seen_ok = self.rotary_vehicle_seen or (not self.rotary_require_seen)
+
+        if clear_ok and time_ok and seen_ok:
+            self.next_state('(rotary vehicle passed and clear stable)')
+
         speed_limit = self.compute_rotary_speed_limit(None)
         cmd, _ = self.rotary_cmd_from_lane(lane_data, speed_limit=speed_limit)
-        return cmd, (
-            f'ROTARY_AFTER_SEEN_WAIT_CONE clear={now - self.rotary_clear_start:.1f}s '
-            f'cone={self.cone_latched} t={self.state_elapsed():.1f}s'
-        )
-
+        return cmd, f'ROTARY_CLEAR_AFTER_SEEN_{now - self.rotary_clear_start:.1f}s'
     def handle_cone(self, lane_data):
         lane_bias_px = 0.0
 
         if self.cone_latched:
-            if not self.cone_target_locked:
-                self.cone_target_lane = self.choose_cone_target_lane(self.cone_latched_lanes)
-                self.cone_target_locked = self.cone_target_lane in ('left', 'right')
-
             if self.cone_target_lane == 'left':
-                lane_bias_px = -self.last_lane_width * self.cone_lane_bias_ratio
+                lane_bias_px = -self.last_lane_width * 0.78
             elif self.cone_target_lane == 'right':
-                lane_bias_px = self.last_lane_width * self.cone_lane_bias_ratio
+                lane_bias_px = self.last_lane_width * 0.78
 
         close_cluster = self.obstacle_in_corridor(
             0.12,
@@ -2793,31 +2259,17 @@ class StanleyMissionFSMNode(Node):
         if close_cluster is not None and close_cluster.nearest < 0.25:
             return self.stop_cmd(), 'CONE_SAFE_STOP'
 
-        if self.cone_latched and self.cone_first_latch_time is not None:
-            latch_time_ok = (time.monotonic() - self.cone_first_latch_time) >= self.cone_latched_min_time
-            state_time_ok = self.state_elapsed() >= self.cone_min_time
-
-            if latch_time_ok and state_time_ok:
-                if self.cone_recover_start_time is None:
-                    self.cone_recover_start_time = time.monotonic()
-
-                lane_bias_px = 0.0
-
         cmd, _ = self.stanley_cmd_from_lane(
             lane_data,
             speed_limit=self.cone_speed_limit,
             lane_bias_px=lane_bias_px,
         )
 
-        if self.cone_recover_start_time is not None:
-            recover_elapsed = time.monotonic() - self.cone_recover_start_time
-            lane_ok = lane_data is not None and lane_data.get('confidence', 0.0) >= self.cone_recover_confidence
-            if recover_elapsed >= self.cone_recover_time and lane_ok:
+        if self.cone_latched and self.cone_first_latch_time is not None:
+            latch_time_ok = (time.monotonic() - self.cone_first_latch_time) >= self.cone_latched_min_time
+            state_time_ok = self.state_elapsed() >= self.cone_min_time
+            if latch_time_ok and state_time_ok:
                 self.next_state('(cone latched and lane shift done)')
-            return cmd, (
-                f'CONE_RECOVER_CENTER {recover_elapsed:.1f}/{self.cone_recover_time:.1f}s '
-                f'target={self.cone_target_lane}'
-            )
 
         return cmd, f'CONE_LATCH_{self.cone_target_lane.upper()}_{sorted(list(self.cone_latched_lanes))}'
 
@@ -2833,6 +2285,7 @@ class StanleyMissionFSMNode(Node):
             else:
                 cmd, _ = self.stanley_cmd_from_lane(
                     lane_data,
+                    speed_limit=self.parking_approach_speed_limit,
                 )
                 return cmd, 'WAIT_FINISH_LINE'
 
@@ -2951,13 +2404,13 @@ class StanleyMissionFSMNode(Node):
                     cmd, status = self.handle_wait_traffic(lane_data, traffic)
                 else:
                     self.set_state(Mission.PEDESTRIAN, '(traffic disabled)')
-                    cmd, status = self.handle_pedestrian(lane_data, mask)
+                    cmd, status = self.handle_pedestrian(lane_data)
 
             elif self.state == Mission.PEDESTRIAN:
-                cmd, status = self.handle_pedestrian(lane_data, mask)
+                cmd, status = self.handle_pedestrian(lane_data)
 
             elif self.state == Mission.BOX1:
-                cmd, status = self.handle_box(lane_data, next_state_after_clear=True, box_profile='box1')
+                cmd, status = self.handle_box(lane_data, next_state_after_clear=True)
 
             elif self.state == Mission.TUNNEL:
                 cmd, status = self.handle_tunnel(lane_data, tunnel_like)
@@ -2969,7 +2422,7 @@ class StanleyMissionFSMNode(Node):
                 cmd, status = self.handle_cone(lane_data)
 
             elif self.state == Mission.BOX2:
-                cmd, status = self.handle_box(lane_data, next_state_after_clear=True, box_profile='box2')
+                cmd, status = self.handle_box(lane_data, next_state_after_clear=True)
 
             elif self.state == Mission.PARKING:
                 cmd, status = self.handle_parking(lane_data, finish_detected)
