@@ -1,3 +1,5 @@
+import os
+from glob import glob
 from setuptools import find_packages, setup
 
 package_name = 'lane_detection'
@@ -10,6 +12,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -22,6 +25,8 @@ setup(
         'console_scripts': [
             'lane_node = lane_detection.lane_node:main',
             'lidar_stop_node = lane_detection.lidar_stop_node:main',
+            'mission_fsm_node = lane_detection.mission_fsm_node:main',
+            'yolov8_cone_node = lane_detection.yolov8_cone_node:main',
         ],
     },
 )
