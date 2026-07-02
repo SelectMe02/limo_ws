@@ -27,6 +27,8 @@ setup(
             'lidar_stop_node = lane_detection.lidar_stop_node:main',
             'mission_fsm_node = lane_detection.mission_fsm_node:main',
             'yolov8_cone_node = lane_detection.yolov8_cone_node:main',
+            'cone_test_yolo = lane_detection.cone_test_yolo:main',
+            'test_node = lane_detection.test:main',
         ],
     },
 )

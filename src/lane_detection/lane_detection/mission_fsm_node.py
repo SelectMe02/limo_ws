@@ -349,6 +349,12 @@ class StanleyMissionFSMNode(Node):
         self.declare_parameter('cone_lane_bias_ratio', 0.62)
         self.declare_parameter('cone_recover_time', 1.0)
         self.declare_parameter('cone_recover_confidence', 0.55)
+        self.declare_parameter('cone_lidar_clear_distance', 0.50)
+        self.declare_parameter('cone_lidar_side_angle_min_deg', 20.0)
+        self.declare_parameter('cone_lidar_side_angle_max_deg', 120.0)
+        self.declare_parameter('cone_lidar_min_hits', 3)
+        self.declare_parameter('cone_lidar_clear_frames', 3)
+        self.declare_parameter('cone_extra_yaw', 0.28)
         # ROTARY부터 들어오는 고깔 정보만 저장한다.
         # PEDESTRIAN/BOX1/TUNNEL에서 들어온 고깔 정보는 전부 무시한다.
         self.declare_parameter('cone_accept_states', ['ROTARY', 'CONE'])
@@ -370,7 +376,8 @@ class StanleyMissionFSMNode(Node):
         # 보행자: 전방 ±20도, 0.50m 이내만 정지 대상으로 본다.
         self.declare_parameter('ped_front_angle_deg', 35.0)
         self.declare_parameter('ped_front_distance', 0.50)
-        self.declare_parameter('ped_front_min_hits', 5)
+        self.declare_parameter('ped_front_min_hits', 2)
+        self.declare_parameter('ped_front_wall_width_threshold', 0.30)
         self.declare_parameter('ped_line_roi_y_min_ratio', 0.42)
         self.declare_parameter('ped_line_roi_y_max_ratio', 0.78)
         self.declare_parameter('ped_line_fill_ratio', 0.55)
@@ -385,15 +392,18 @@ class StanleyMissionFSMNode(Node):
         # 이렇게 해야 다른 트랙/벽의 물체가 단순 각도 조건만으로 박스가 되는 것을 줄일 수 있다.
         self.declare_parameter('box_front_angle_deg', 60.0)
         self.declare_parameter('box_front_stop_distance', 0.45)
-        self.declare_parameter('box_front_min_hits', 4)
+        self.declare_parameter('box_front_min_hits', 2)
         self.declare_parameter('box_side_angle_min_deg', 20.0)
         self.declare_parameter('box_side_angle_max_deg', 90.0)
         self.declare_parameter('box_side_distance', 0.65)
         self.declare_parameter('box_side_min_hits', 2)
+        self.declare_parameter('box1_angle_min_deg', -90.0)
+        self.declare_parameter('box1_angle_max_deg', 20.0)
+        self.declare_parameter('box1_front_stop_distance', 0.60)
         self.declare_parameter('box_track_x_min', 0.15)
         self.declare_parameter('box_track_x_max', 0.95)
         self.declare_parameter('box_track_half_width', 0.32)
-        self.declare_parameter('box_track_min_points', 3)
+        self.declare_parameter('box_track_min_points', 2)
         self.declare_parameter('box_wall_width_threshold', 0.58)
         self.declare_parameter('box1_close_side_distance', 0.20)
         self.declare_parameter('box1_close_side_min_hits', 2)
@@ -408,7 +418,8 @@ class StanleyMissionFSMNode(Node):
         self.declare_parameter('box_lshape_min_y_span', 0.05)
         self.declare_parameter('box_lshape_corner_band', 0.035)
         self.declare_parameter('box_lshape_min_leg_points', 2)
-        self.declare_parameter('box_avoid_hold_time', 0.7)
+        self.declare_parameter('box_avoid_hold_time', 0.5)
+        self.declare_parameter('box1_extra_yaw', 0.38)
 
         # BOX2는 큰 곡률 구간에서 보이므로 BOX1보다 ROI/각도를 조금 넓게 쓴다.
         self.declare_parameter('box2_track_half_width', 0.34)
@@ -416,7 +427,7 @@ class StanleyMissionFSMNode(Node):
         self.declare_parameter('box2_front_min_hits', 3)
         self.declare_parameter('box2_side_min_hits', 2)
         self.declare_parameter('box2_avoid_hold_time', 0.9)
-        self.declare_parameter('box2_extra_yaw', 0.65)
+        self.declare_parameter('box2_extra_yaw', 0.85)
         self.declare_parameter('box2_left_fallback_enabled', True)
 
         # 터널:
@@ -425,20 +436,22 @@ class StanleyMissionFSMNode(Node):
         self.declare_parameter('tunnel_exit_frames', 2)
         self.declare_parameter('tunnel_enter_min_time', 0.2)
         self.declare_parameter('tunnel_memory_min_time', 0.2)
-        self.declare_parameter('tunnel_wall_distance', 0.30)
+        self.declare_parameter('tunnel_wall_distance', 0.40)
         self.declare_parameter('tunnel_wall_min_y', 0.08)
         self.declare_parameter('tunnel_wall_x_min', -0.05)
         self.declare_parameter('tunnel_wall_x_max', 0.70)
         self.declare_parameter('tunnel_wall_min_hits', 3)
+        self.declare_parameter('tunnel_exit_front_angle_deg', 90.0)
+        self.declare_parameter('tunnel_center_x_min', 0.05)
+        self.declare_parameter('tunnel_center_x_max', 0.60)
+        self.declare_parameter('tunnel_wall_center_gain', 3.0)
         self.declare_parameter('tunnel_exit_drive_distance', 0.80)
-        self.declare_parameter('tunnel_approach_force_right', True)
-        self.declare_parameter('tunnel_approach_right_yaw', 0.65)
-        self.declare_parameter('tunnel_approach_speed_limit', 0.35)
 
         # 회전교차로 차량: 사용자가 보낸 TrackVehicleFollowNode의 전방 차량 추종 구조를 반영한다.
         self.declare_parameter('rotary_front_x_min', 0.15)
-        self.declare_parameter('rotary_front_x_max', 1.50)
+        self.declare_parameter('rotary_front_x_max', 0.80)
         self.declare_parameter('rotary_front_half_width', 0.36)
+        self.declare_parameter('rotary_front_angle_deg', 35.0)
         self.declare_parameter('rotary_cluster_min_points', 3)
         self.declare_parameter('rotary_wall_width_threshold', 0.65)
         self.declare_parameter('rotary_emergency_stop_distance', 0.28)
@@ -474,6 +487,12 @@ class StanleyMissionFSMNode(Node):
         self.cone_lane_bias_ratio = float(self.get_parameter('cone_lane_bias_ratio').value)
         self.cone_recover_time = float(self.get_parameter('cone_recover_time').value)
         self.cone_recover_confidence = float(self.get_parameter('cone_recover_confidence').value)
+        self.cone_lidar_clear_distance = float(self.get_parameter('cone_lidar_clear_distance').value)
+        self.cone_lidar_side_angle_min_deg = float(self.get_parameter('cone_lidar_side_angle_min_deg').value)
+        self.cone_lidar_side_angle_max_deg = float(self.get_parameter('cone_lidar_side_angle_max_deg').value)
+        self.cone_lidar_min_hits = int(self.get_parameter('cone_lidar_min_hits').value)
+        self.cone_lidar_clear_frames = int(self.get_parameter('cone_lidar_clear_frames').value)
+        self.cone_extra_yaw = float(self.get_parameter('cone_extra_yaw').value)
         self.cone_accept_states = set([
             str(x).strip().upper()
             for x in self.get_parameter('cone_accept_states').value
@@ -491,6 +510,7 @@ class StanleyMissionFSMNode(Node):
         self.ped_front_angle_deg = float(self.get_parameter('ped_front_angle_deg').value)
         self.ped_front_distance = float(self.get_parameter('ped_front_distance').value)
         self.ped_front_min_hits = int(self.get_parameter('ped_front_min_hits').value)
+        self.ped_front_wall_width_threshold = float(self.get_parameter('ped_front_wall_width_threshold').value)
         self.ped_line_roi_y_min_ratio = float(self.get_parameter('ped_line_roi_y_min_ratio').value)
         self.ped_line_roi_y_max_ratio = float(self.get_parameter('ped_line_roi_y_max_ratio').value)
         self.ped_line_fill_ratio = float(self.get_parameter('ped_line_fill_ratio').value)
@@ -505,6 +525,9 @@ class StanleyMissionFSMNode(Node):
         self.box_side_angle_max_deg = float(self.get_parameter('box_side_angle_max_deg').value)
         self.box_side_distance = float(self.get_parameter('box_side_distance').value)
         self.box_side_min_hits = int(self.get_parameter('box_side_min_hits').value)
+        self.box1_angle_min_deg = float(self.get_parameter('box1_angle_min_deg').value)
+        self.box1_angle_max_deg = float(self.get_parameter('box1_angle_max_deg').value)
+        self.box1_front_stop_distance = float(self.get_parameter('box1_front_stop_distance').value)
         self.box_track_x_min = float(self.get_parameter('box_track_x_min').value)
         self.box_track_x_max = float(self.get_parameter('box_track_x_max').value)
         self.box_track_half_width = float(self.get_parameter('box_track_half_width').value)
@@ -521,6 +544,7 @@ class StanleyMissionFSMNode(Node):
         self.box_lshape_corner_band = float(self.get_parameter('box_lshape_corner_band').value)
         self.box_lshape_min_leg_points = int(self.get_parameter('box_lshape_min_leg_points').value)
         self.box_avoid_hold_time = float(self.get_parameter('box_avoid_hold_time').value)
+        self.box1_extra_yaw = float(self.get_parameter('box1_extra_yaw').value)
         self.box2_track_half_width = float(self.get_parameter('box2_track_half_width').value)
         self.box2_front_angle_deg = float(self.get_parameter('box2_front_angle_deg').value)
         self.box2_front_min_hits = int(self.get_parameter('box2_front_min_hits').value)
@@ -538,14 +562,16 @@ class StanleyMissionFSMNode(Node):
         self.tunnel_wall_x_min = float(self.get_parameter('tunnel_wall_x_min').value)
         self.tunnel_wall_x_max = float(self.get_parameter('tunnel_wall_x_max').value)
         self.tunnel_wall_min_hits = int(self.get_parameter('tunnel_wall_min_hits').value)
+        self.tunnel_exit_front_angle_deg = float(self.get_parameter('tunnel_exit_front_angle_deg').value)
+        self.tunnel_center_x_min = float(self.get_parameter('tunnel_center_x_min').value)
+        self.tunnel_center_x_max = float(self.get_parameter('tunnel_center_x_max').value)
+        self.tunnel_wall_center_gain = float(self.get_parameter('tunnel_wall_center_gain').value)
         self.tunnel_exit_drive_distance = float(self.get_parameter('tunnel_exit_drive_distance').value)
-        self.tunnel_approach_force_right = bool(self.get_parameter('tunnel_approach_force_right').value)
-        self.tunnel_approach_right_yaw = float(self.get_parameter('tunnel_approach_right_yaw').value)
-        self.tunnel_approach_speed_limit = float(self.get_parameter('tunnel_approach_speed_limit').value)
 
         self.rotary_front_x_min = float(self.get_parameter('rotary_front_x_min').value)
         self.rotary_front_x_max = float(self.get_parameter('rotary_front_x_max').value)
         self.rotary_front_half_width = float(self.get_parameter('rotary_front_half_width').value)
+        self.rotary_front_angle_deg = float(self.get_parameter('rotary_front_angle_deg').value)
         self.rotary_cluster_min_points = int(self.get_parameter('rotary_cluster_min_points').value)
         self.rotary_wall_width_threshold = float(self.get_parameter('rotary_wall_width_threshold').value)
         self.rotary_emergency_stop_distance = float(self.get_parameter('rotary_emergency_stop_distance').value)
@@ -648,6 +674,7 @@ class StanleyMissionFSMNode(Node):
         self.cone_first_latch_time = None
         self.last_cone_msg_time = 0.0
         self.cone_recover_start_time = None
+        self.cone_lidar_clear_count = 0
 
         self.parking_started = False
         self.parking_step_index = 0
@@ -1030,6 +1057,110 @@ class StanleyMissionFSMNode(Node):
 
         return best_pair
 
+    def choose_cone_outer_pair(
+        self,
+        fit_candidates,
+        target_lane,
+        image_center,
+        reference_x=None,
+        strict_outer=False,
+    ):
+        if target_lane not in ('left', 'right'):
+            return None
+
+        if reference_x is None:
+            reference_x = image_center
+
+        ordered = sorted(fit_candidates, key=lambda item: item['x_bottom'])
+        valid_pairs = []
+
+        for i in range(len(ordered)):
+            for j in range(i + 1, len(ordered)):
+                left = ordered[i]
+                right = ordered[j]
+                lane_width = right['x_bottom'] - left['x_bottom']
+
+                if not (PAIR_MIN_LANE_WIDTH_PX <= lane_width <= PAIR_MAX_LANE_WIDTH_PX):
+                    continue
+
+                pair_center = (left['x_bottom'] + right['x_bottom']) / 2.0
+                count_bonus = 0.001 * (left['count'] + right['count'])
+                valid_pairs.append((left, right, lane_width, pair_center, count_bonus))
+
+        if len(valid_pairs) == 0:
+            return None
+
+        if strict_outer:
+            if target_lane == 'right':
+                best = max(valid_pairs, key=lambda pair: pair[3] + pair[4])
+            else:
+                best = min(valid_pairs, key=lambda pair: pair[3] - pair[4])
+            return best[0], best[1], best[2]
+
+        side_tolerance = max(25.0, float(self.last_lane_width) * 0.15)
+        max_reference_jump = max(70.0, float(self.last_lane_width) * 0.65)
+        near_reference = [
+            pair for pair in valid_pairs
+            if abs(pair[3] - reference_x) <= max_reference_jump
+        ]
+
+        if target_lane == 'right':
+            preferred = [
+                pair for pair in near_reference
+                if pair[3] >= reference_x - side_tolerance
+            ]
+        else:
+            preferred = [
+                pair for pair in near_reference
+                if pair[3] <= reference_x + side_tolerance
+            ]
+
+        if len(preferred) > 0:
+            source = preferred
+        elif len(near_reference) > 0:
+            source = near_reference
+        else:
+            source = valid_pairs
+
+        best = min(
+            source,
+            key=lambda pair: abs(pair[3] - reference_x) - pair[4]
+        )
+
+        return best[0], best[1], best[2]
+
+    def choose_cone_inner_single(
+        self,
+        fit_candidates,
+        target_lane,
+        image_center,
+        reference_x=None,
+        strict_outer=False,
+    ):
+        if target_lane not in ('left', 'right') or len(fit_candidates) == 0:
+            return None, None
+
+        outer_pair = self.choose_cone_outer_pair(
+            fit_candidates,
+            target_lane,
+            image_center,
+            reference_x,
+            strict_outer
+        )
+        if outer_pair is not None:
+            left, right, _ = outer_pair
+            if target_lane == 'right':
+                return left, 'left'
+            return right, 'right'
+
+        ordered = sorted(fit_candidates, key=lambda item: item['x_bottom'])
+        if target_lane == 'right':
+            single = ordered[-2] if len(ordered) >= 2 else ordered[-1]
+            return single, 'left'
+
+        single = ordered[1] if len(ordered) >= 2 else ordered[0]
+        return single, 'right'
+
     def choose_best_single(self, left_candidates, right_candidates, image_center):
         """
         한쪽 차선만 보이는 경우:
@@ -1105,6 +1236,7 @@ class StanleyMissionFSMNode(Node):
             right_base_candidates,
             h
         )
+        all_fit_candidates = left_fit_candidates + right_fit_candidates
 
         center_fit = None
         left_fit = None
@@ -1113,14 +1245,111 @@ class StanleyMissionFSMNode(Node):
         mode = 'none'
         side = None
         measured_lane_width = None
+        cone_pair_target = None
+        cone_pair_reference_x = image_center
+        cone_lidar_active = False
 
-        best_pair = self.choose_best_pair(
-            left_fit_candidates,
-            right_fit_candidates,
-            image_center
-        )
+        if self.prev_center_fit is not None:
+            prev_x = poly_x(self.prev_center_fit, h - 1)
+            if -w * 0.25 <= prev_x <= w * 1.25:
+                cone_pair_reference_x = prev_x
 
-        if best_pair is not None:
+        if (
+            self.state == Mission.CONE and
+            self.cone_latched and
+            self.cone_target_lane in ('left', 'right')
+        ):
+            cone_lidar_active, _, _, _ = self.cone_lidar_side_obstacle()
+
+        if (
+            self.state == Mission.CONE and
+            self.cone_latched and
+            self.cone_recover_start_time is not None and
+            not cone_lidar_active and
+            self.cone_target_lane in ('left', 'right')
+        ):
+            single, single_side = self.choose_cone_inner_single(
+                all_fit_candidates,
+                self.cone_target_lane,
+                image_center,
+                cone_pair_reference_x,
+                strict_outer=False
+            )
+
+            if single is not None:
+                single_fit = single['fit']
+                center_fit = np.array(single_fit, dtype=np.float64)
+                side = single_side
+                self.last_single_side = side
+
+                if side == 'left':
+                    center_fit[2] += self.last_lane_width / 2.0
+                    mode = f'cone_recover_inner_{self.cone_target_lane}'
+                    left_fit = single_fit
+                else:
+                    center_fit[2] -= self.last_lane_width / 2.0
+                    mode = f'cone_recover_inner_{self.cone_target_lane}'
+                    right_fit = single_fit
+
+                confidence = 0.82
+
+        best_pair = None
+        if (
+            center_fit is None and
+            self.state == Mission.CONE and
+            self.cone_latched and
+            self.cone_target_lane in ('left', 'right')
+        ):
+            cone_force_outer = self.cone_recover_start_time is None or cone_lidar_active
+            best_pair = self.choose_cone_outer_pair(
+                all_fit_candidates,
+                self.cone_target_lane,
+                image_center,
+                cone_pair_reference_x,
+                strict_outer=cone_force_outer
+            )
+            if best_pair is not None:
+                cone_pair_target = self.cone_target_lane
+
+        if (
+            center_fit is None and
+            best_pair is None and
+            self.state == Mission.CONE and
+            self.cone_latched and
+            self.cone_target_lane in ('left', 'right')
+        ):
+            single, single_side = self.choose_cone_inner_single(
+                all_fit_candidates,
+                self.cone_target_lane,
+                image_center,
+                cone_pair_reference_x,
+                strict_outer=True
+            )
+
+            if single is not None:
+                single_fit = single['fit']
+                center_fit = np.array(single_fit, dtype=np.float64)
+                side = single_side
+                self.last_single_side = side
+
+                if side == 'left':
+                    center_fit[2] += self.last_lane_width / 2.0
+                    left_fit = single_fit
+                else:
+                    center_fit[2] -= self.last_lane_width / 2.0
+                    right_fit = single_fit
+
+                mode = f'cone_force_single_{self.cone_target_lane}'
+                confidence = 0.76
+
+        if center_fit is None and best_pair is None:
+            best_pair = self.choose_best_pair(
+                left_fit_candidates,
+                right_fit_candidates,
+                image_center
+            )
+
+        if center_fit is None and best_pair is not None:
             left, right, lane_width = best_pair
 
             left_fit = left['fit']
@@ -1147,6 +1376,7 @@ class StanleyMissionFSMNode(Node):
             curve_heading = self.estimate_fit_heading(avg_center_fit, h)
 
             use_outer_lane = (
+                cone_pair_target is None and
                 USE_OUTER_LANE_IN_BOTH_CURVE and
                 (
                     abs(curve_heading) > BOTH_CURVE_HEADING_TH or
@@ -1154,7 +1384,11 @@ class StanleyMissionFSMNode(Node):
                 )
             )
 
-            if use_outer_lane:
+            if cone_pair_target is not None:
+                center_fit = avg_center_fit
+                confidence = 1.0
+                mode = f'cone_pair_{cone_pair_target}'
+            elif use_outer_lane:
                 # heading < 0이면 오른쪽 커브로 판단
                 # 오른쪽 커브에서는 오른쪽 차선이 안쪽 차선일 가능성이 크므로
                 # 왼쪽 차선을 기준으로 중앙선을 만든다.
@@ -1544,12 +1778,14 @@ class StanleyMissionFSMNode(Node):
             self.cone_first_latch_time = None
             self.last_cone_msg_time = 0.0
             self.cone_recover_start_time = None
+            self.cone_lidar_clear_count = 0
 
         # CONE에 들어올 때는 ROTARY에서 이미 저장한 고깔 정보를 유지해야 한다.
         # 따라서 여기서 cone latch를 지우지 않는다.
         if new_state == Mission.CONE:
             self.cone_target_locked = False
             self.cone_recover_start_time = None
+            self.cone_lidar_clear_count = 0
 
         self.parking_started = False
         self.parking_step_index = 0
@@ -1611,6 +1847,7 @@ class StanleyMissionFSMNode(Node):
             self.cone_target_votes = []
             self.cone_first_latch_time = None
             self.cone_recover_start_time = None
+            self.cone_lidar_clear_count = 0
             self.get_logger().warn('cone latch reset by manual command')
         elif cmd in aliases:
             self.set_state(aliases[cmd], '(manual set)')
@@ -1689,9 +1926,8 @@ class StanleyMissionFSMNode(Node):
         self.lidar_clusters = self.make_clusters(front_points)
         self.last_scan_time = time.monotonic()
 
-        self.ped_front_hit = ped_front_hit
-        self.ped_front_min_dist = ped_front_min
-        self.ped_front_obs = ped_front_hit >= self.ped_front_min_hits
+        self.ped_front_hit, self.ped_front_min_dist = self.pedestrian_front_cluster_hits()
+        self.ped_front_obs = self.ped_front_hit >= self.ped_front_min_hits
 
         self.box_front_hit = box_front_hit
         self.box_front_min_dist = box_front_min
@@ -1765,6 +2001,39 @@ class StanleyMissionFSMNode(Node):
         if (cluster.max_x - cluster.min_x) > 0.75:
             return True
         return False
+
+    def pedestrian_front_cluster_hits(self):
+        hit_count = 0
+        min_dist = 9.9
+
+        for cluster in self.lidar_clusters:
+            if cluster.nearest > self.ped_front_distance:
+                continue
+            if cluster.width > self.ped_front_wall_width_threshold:
+                continue
+
+            cluster_hits = 0
+            cluster_min = 9.9
+
+            for _, _, dist, angle in cluster.points:
+                if dist > self.ped_front_distance:
+                    continue
+
+                angle_deg = math.degrees(angle)
+                while angle_deg > 180.0:
+                    angle_deg -= 360.0
+                while angle_deg < -180.0:
+                    angle_deg += 360.0
+
+                if -self.ped_front_angle_deg <= angle_deg <= self.ped_front_angle_deg:
+                    cluster_hits += 1
+                    cluster_min = min(cluster_min, dist)
+
+            if cluster_hits > 0:
+                hit_count += cluster_hits
+                min_dist = min(min_dist, cluster_min)
+
+        return hit_count, min_dist
 
     def obstacle_in_corridor(self, x_min, x_max, half_width, min_points=3, ignore_wall=True):
         best = None
@@ -1876,7 +2145,6 @@ class StanleyMissionFSMNode(Node):
 
     def box1_close_side_obstacle(self):
         best = None
-        front_angle_deg = self.box_front_angle_deg
 
         for cluster in self.lidar_clusters:
             if cluster.count < self.box1_close_side_min_hits:
@@ -1903,15 +2171,11 @@ class StanleyMissionFSMNode(Node):
                 while angle_deg < -180.0:
                     angle_deg += 360.0
 
-                if -front_angle_deg <= angle_deg <= front_angle_deg:
+                if not (self.box1_angle_min_deg <= angle_deg <= self.box1_angle_max_deg):
                     continue
 
-                if y >= self.path_center_y_m:
-                    left_hits += 1
-                    left_min = min(left_min, dist)
-                else:
-                    right_hits += 1
-                    right_min = min(right_min, dist)
+                right_hits += 1
+                right_min = min(right_min, dist)
 
             if left_hits < self.box1_close_side_min_hits and right_hits < self.box1_close_side_min_hits:
                 continue
@@ -1968,6 +2232,7 @@ class StanleyMissionFSMNode(Node):
         track_half_width = self.box2_track_half_width if is_box2 else self.box_track_half_width
         front_angle_deg = self.box2_front_angle_deg if is_box2 else self.box_front_angle_deg
         front_min_hits = self.box2_front_min_hits if is_box2 else self.box_front_min_hits
+        front_stop_distance = self.box_front_stop_distance if is_box2 else self.box1_front_stop_distance
         side_min_hits = self.box2_side_min_hits if is_box2 else self.box_side_min_hits
 
         for cluster in self.lidar_clusters:
@@ -2002,8 +2267,11 @@ class StanleyMissionFSMNode(Node):
                 while angle_deg < -180.0:
                     angle_deg += 360.0
 
+                if not is_box2 and not (self.box1_angle_min_deg <= angle_deg <= self.box1_angle_max_deg):
+                    continue
+
                 if -front_angle_deg <= angle_deg <= front_angle_deg:
-                    if dist <= self.box_front_stop_distance:
+                    if dist <= front_stop_distance:
                         front_hits += 1
                         front_min = min(front_min, dist)
                 elif self.box_side_angle_min_deg < angle_deg <= self.box_side_angle_max_deg:
@@ -2061,7 +2329,9 @@ class StanleyMissionFSMNode(Node):
             elif front_hits >= front_min_hits:
                 # 전방에만 걸린 경우도 L-shape이면 박스 후보로 인정한다.
                 # 방향은 cluster가 현재 경로 중심보다 어느 쪽에 치우쳤는지로 정한다.
-                if cluster.cy >= path_y:
+                if not is_box2:
+                    sector = 'right'
+                elif cluster.cy >= path_y:
                     sector = 'left'
                 else:
                     sector = 'right'
@@ -2107,6 +2377,9 @@ class StanleyMissionFSMNode(Node):
             if self.is_wall_like(cluster):
                 continue
             if not (self.rotary_front_x_min <= cluster.cx <= self.rotary_front_x_max):
+                continue
+            cluster_angle_deg = math.degrees(math.atan2(cluster.cy, max(cluster.cx, 1e-6)))
+            if not (-self.rotary_front_angle_deg <= cluster_angle_deg <= self.rotary_front_angle_deg):
                 continue
             if abs(cluster.cy - self.path_center_y_m) > self.rotary_front_half_width:
                 continue
@@ -2348,6 +2621,41 @@ class StanleyMissionFSMNode(Node):
             return 'left'
         return 'center'
 
+    def cone_lidar_side_obstacle(self):
+        if self.cone_target_lane not in ('left', 'right'):
+            self.cone_lidar_clear_count = 0
+            return False, 'none', 0, 9.9
+
+        # target_lane은 주행할 빈 방향이다. 콘은 그 반대편 옆 섹터에 남는다.
+        if self.cone_target_lane == 'left':
+            side = 'right'
+            angle_min = -self.cone_lidar_side_angle_max_deg
+            angle_max = -self.cone_lidar_side_angle_min_deg
+        else:
+            side = 'left'
+            angle_min = self.cone_lidar_side_angle_min_deg
+            angle_max = self.cone_lidar_side_angle_max_deg
+
+        hits = 0
+        nearest = 9.9
+
+        for _, _, dist, angle in self.lidar_points:
+            if dist > self.cone_lidar_clear_distance:
+                continue
+
+            angle_deg = math.degrees(angle)
+            while angle_deg > 180.0:
+                angle_deg -= 360.0
+            while angle_deg < -180.0:
+                angle_deg += 360.0
+
+            if angle_min <= angle_deg <= angle_max:
+                hits += 1
+                nearest = min(nearest, dist)
+
+        active = hits >= self.cone_lidar_min_hits
+        return active, side, hits, nearest
+
     # ========================================================
     # Command helpers
     # ========================================================
@@ -2456,7 +2764,7 @@ class StanleyMissionFSMNode(Node):
         now = time.monotonic()
         is_box2 = box_profile == 'box2'
         avoid_hold_time = self.box2_avoid_hold_time if is_box2 else self.box_avoid_hold_time
-        avoid_yaw = self.box2_extra_yaw if is_box2 else 0.55
+        avoid_yaw = self.box2_extra_yaw if is_box2 else self.box1_extra_yaw
 
         def box_cmd(extra_yaw, fallback_speed=0.24):
             if lane_data is None:
@@ -2567,6 +2875,95 @@ class StanleyMissionFSMNode(Node):
             'right_min': right_min,
         }
 
+    def tunnel_exit_front_wall_state(self):
+        left_hits = 0
+        right_hits = 0
+
+        for x, y, _, angle in self.lidar_points:
+            angle_deg = math.degrees(angle)
+            while angle_deg > 180.0:
+                angle_deg -= 360.0
+            while angle_deg < -180.0:
+                angle_deg += 360.0
+
+            if not (-self.tunnel_exit_front_angle_deg <= angle_deg <= self.tunnel_exit_front_angle_deg):
+                continue
+            if x < self.tunnel_wall_x_min:
+                continue
+            if abs(y) < self.tunnel_wall_min_y:
+                continue
+            if abs(y) > self.tunnel_wall_distance:
+                continue
+
+            if y > 0.0:
+                left_hits += 1
+            else:
+                right_hits += 1
+
+        total_hits = left_hits + right_hits
+        return {
+            'clear': total_hits == 0,
+            'hits': total_hits,
+            'left_hits': left_hits,
+            'right_hits': right_hits,
+        }
+
+    def tunnel_center_cmd_from_walls(self):
+        left_y = []
+        right_y = []
+
+        for x, y, _, angle in self.lidar_points:
+            angle_deg = math.degrees(angle)
+            while angle_deg > 180.0:
+                angle_deg -= 360.0
+            while angle_deg < -180.0:
+                angle_deg += 360.0
+
+            if not (-90.0 <= angle_deg <= 90.0):
+                continue
+            if not (self.tunnel_center_x_min <= x <= self.tunnel_center_x_max):
+                continue
+            if abs(y) < self.tunnel_wall_min_y:
+                continue
+            if abs(y) > self.tunnel_wall_distance:
+                continue
+
+            if y > 0.0:
+                left_y.append(y)
+            else:
+                right_y.append(y)
+
+        if len(left_y) < self.tunnel_wall_min_hits or len(right_y) < self.tunnel_wall_min_hits:
+            return None, None
+
+        left_mid = float(np.median(left_y))
+        right_mid = float(np.median(right_y))
+        wall_center_y = (left_mid + right_mid) / 2.0
+
+        speed = self.smooth_speed(TUNNEL_SPEED)
+        yaw_rate = clamp(
+            self.tunnel_wall_center_gain * wall_center_y,
+            -MAX_YAW_RATE,
+            MAX_YAW_RATE
+        )
+        self.prev_steer = clamp(
+            math.atan2(yaw_rate * WHEELBASE_M, max(speed, 0.10)),
+            -MAX_STEERING_ANGLE,
+            MAX_STEERING_ANGLE
+        )
+
+        cmd = Twist()
+        cmd.linear.x = float(speed)
+        cmd.angular.z = float(yaw_rate)
+
+        return cmd, {
+            'center_y': wall_center_y,
+            'left_mid': left_mid,
+            'right_mid': right_mid,
+            'left_hits': len(left_y),
+            'right_hits': len(right_y),
+        }
+
     def handle_tunnel(self, lane_data, tunnel_like):
         """
         터널 판단:
@@ -2576,6 +2973,7 @@ class StanleyMissionFSMNode(Node):
         now = time.monotonic()
         wall = self.tunnel_wall_state()
         wall_inside = wall['inside']
+        exit_wall = self.tunnel_exit_front_wall_state()
 
         if not self.tunnel_was_seen:
             if wall_inside and self.state_elapsed() >= self.tunnel_enter_min_time:
@@ -2591,40 +2989,30 @@ class StanleyMissionFSMNode(Node):
                     f'TUNNEL_WALL_ENTER L{wall["left_hits"]} R{wall["right_hits"]}'
                 )
 
-            if self.tunnel_approach_force_right and not wall_inside:
-                if lane_data is None:
-                    cmd = Twist()
-                    cmd.linear.x = min(0.20, self.tunnel_approach_speed_limit)
-                    cmd.angular.z = -abs(self.tunnel_approach_right_yaw)
-                else:
-                    cmd, _ = self.stanley_cmd_from_lane(
-                        lane_data,
-                        speed_limit=self.tunnel_approach_speed_limit,
-                        extra_yaw=-abs(self.tunnel_approach_right_yaw),
-                    )
-
-                return cmd, (
-                    f'TUNNEL_APPROACH_FORCE_RIGHT {self.tunnel_candidate_count}/{self.tunnel_enter_frames} '
-                    f'L{wall["left_hits"]} R{wall["right_hits"]}'
-                )
-
             if lane_data is None:
-                return self.memory_lane_cmd(tunnel_like=False), (
-                    f'TUNNEL_WALL_APPROACH_LOST {self.tunnel_candidate_count}/{self.tunnel_enter_frames} '
-                    f'L{wall["left_hits"]} R{wall["right_hits"]}'
-                )
-
-            cmd, _ = self.stanley_cmd_from_lane(lane_data)
+                cmd = self.memory_lane_cmd(tunnel_like=False)
+            else:
+                cmd, _ = self.stanley_cmd_from_lane(lane_data)
             return cmd, (
                 f'TUNNEL_WALL_APPROACH {self.tunnel_candidate_count}/{self.tunnel_enter_frames} '
                 f'L{wall["left_hits"]} R{wall["right_hits"]}'
             )
 
-        if wall_inside:
+        if not exit_wall['clear']:
             self.tunnel_recover_count = 0
             self.tunnel_exit_start_time = None
+            cmd, center = self.tunnel_center_cmd_from_walls()
+            if cmd is not None and center is not None:
+                return cmd, (
+                    f'TUNNEL_WALL_CENTER cy={center["center_y"]:.3f} '
+                    f'L={center["left_mid"]:.2f}/{center["left_hits"]} '
+                    f'R={center["right_mid"]:.2f}/{center["right_hits"]} '
+                    f'front={exit_wall["hits"]}({exit_wall["left_hits"]}/{exit_wall["right_hits"]})'
+                )
+
             return self.memory_lane_cmd(tunnel_like=True), (
-                f'TUNNEL_WALL_MEMORY L{wall["left_hits"]} R{wall["right_hits"]}'
+                f'TUNNEL_WALL_MEMORY_FALLBACK L{wall["left_hits"]} R{wall["right_hits"]} '
+                f'front={exit_wall["hits"]}({exit_wall["left_hits"]}/{exit_wall["right_hits"]})'
             )
 
         self.tunnel_recover_count += 1
@@ -2633,10 +3021,7 @@ class StanleyMissionFSMNode(Node):
         if self.tunnel_seen_time is not None:
             memory_time_ok = (now - self.tunnel_seen_time) >= self.tunnel_memory_min_time
 
-        if lane_data is None:
-            cmd = self.memory_lane_cmd(tunnel_like=False)
-        else:
-            cmd, _ = self.stanley_cmd_from_lane(lane_data)
+        cmd = self.memory_lane_cmd(tunnel_like=True)
 
         if memory_time_ok and self.tunnel_recover_count >= self.tunnel_exit_frames:
             if self.tunnel_exit_start_time is None:
@@ -2772,6 +3157,7 @@ class StanleyMissionFSMNode(Node):
 
     def handle_cone(self, lane_data):
         lane_bias_px = 0.0
+        extra_yaw = 0.0
 
         if self.cone_latched:
             if not self.cone_target_locked:
@@ -2779,9 +3165,18 @@ class StanleyMissionFSMNode(Node):
                 self.cone_target_locked = self.cone_target_lane in ('left', 'right')
 
             if self.cone_target_lane == 'left':
-                lane_bias_px = -self.last_lane_width * self.cone_lane_bias_ratio
-            elif self.cone_target_lane == 'right':
                 lane_bias_px = self.last_lane_width * self.cone_lane_bias_ratio
+                extra_yaw = self.cone_extra_yaw
+            elif self.cone_target_lane == 'right':
+                lane_bias_px = -self.last_lane_width * self.cone_lane_bias_ratio
+                extra_yaw = -self.cone_extra_yaw
+
+        if lane_data is not None and (
+            str(lane_data.get('mode', '')).startswith('cone_pair_') or
+            str(lane_data.get('mode', '')).startswith('cone_recover_inner_') or
+            str(lane_data.get('mode', '')).startswith('cone_force_single_')
+        ):
+            lane_bias_px = 0.0
 
         close_cluster = self.obstacle_in_corridor(
             0.12,
@@ -2802,24 +3197,43 @@ class StanleyMissionFSMNode(Node):
                     self.cone_recover_start_time = time.monotonic()
 
                 lane_bias_px = 0.0
+                extra_yaw = 0.0
 
         cmd, _ = self.stanley_cmd_from_lane(
             lane_data,
             speed_limit=self.cone_speed_limit,
+            extra_yaw=extra_yaw,
             lane_bias_px=lane_bias_px,
         )
 
         if self.cone_recover_start_time is not None:
             recover_elapsed = time.monotonic() - self.cone_recover_start_time
             lane_ok = lane_data is not None and lane_data.get('confidence', 0.0) >= self.cone_recover_confidence
-            if recover_elapsed >= self.cone_recover_time and lane_ok:
+            cone_side_active, cone_side, cone_hits, cone_nearest = self.cone_lidar_side_obstacle()
+
+            if cone_side_active:
+                self.cone_lidar_clear_count = 0
+            else:
+                self.cone_lidar_clear_count += 1
+
+            lidar_clear_ok = self.cone_lidar_clear_count >= self.cone_lidar_clear_frames
+
+            if recover_elapsed >= self.cone_recover_time and lane_ok and lidar_clear_ok:
                 self.next_state('(cone latched and lane shift done)')
             return cmd, (
                 f'CONE_RECOVER_CENTER {recover_elapsed:.1f}/{self.cone_recover_time:.1f}s '
-                f'target={self.cone_target_lane}'
+                f'mode={lane_data.get("mode", "none") if lane_data is not None else "none"} '
+                f'target={self.cone_target_lane} lidar_{cone_side}='
+                f'{cone_hits}/{self.cone_lidar_min_hits} clear='
+                f'{self.cone_lidar_clear_count}/{self.cone_lidar_clear_frames} '
+                f'd={cone_nearest:.2f}'
             )
 
-        return cmd, f'CONE_LATCH_{self.cone_target_lane.upper()}_{sorted(list(self.cone_latched_lanes))}'
+        lane_mode = lane_data.get('mode', 'none') if lane_data is not None else 'none'
+        return cmd, (
+            f'CONE_LATCH_{self.cone_target_lane.upper()}_{sorted(list(self.cone_latched_lanes))} '
+            f'mode={lane_mode}'
+        )
 
     def handle_parking(self, lane_data, finish_detected):
         now = time.monotonic()
