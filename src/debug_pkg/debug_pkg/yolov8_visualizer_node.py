@@ -35,7 +35,7 @@ class Yolov8VisualizerNode(Node):
         self.declare_parameter('output_image_topic', '/dbg_image')
         self.declare_parameter('output_compressed_topic', '/dbg_image/compressed')
         self.declare_parameter('publish_compressed', True)
-        self.declare_parameter('show_window', False)
+        self.declare_parameter('show_window', True)
         self.declare_parameter('draw_extra_text', True)
 
         self.debug_image_topic = self.get_parameter('debug_image_topic').value
@@ -47,6 +47,12 @@ class Yolov8VisualizerNode(Node):
         self.draw_extra_text = bool(self.get_parameter('draw_extra_text').value)
 
         self.last_blocked_lanes = ''
+
+        if self.show_window:
+            try:
+                cv2.namedWindow('yolov8_visualizer_debug', cv2.WINDOW_NORMAL)
+            except Exception as e:
+                self.get_logger().warn(f'cv window create error: {e}')
 
         # -------------------------
         # Publishers

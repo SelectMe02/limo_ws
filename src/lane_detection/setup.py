@@ -29,6 +29,10 @@ setup(
             'yolov8_cone_node = lane_detection.yolov8_cone_node:main',
             'cone_test_yolo = lane_detection.cone_test_yolo:main',
             'test_node = lane_detection.test:main',
+            'practice_node = lane_detection.practice:main',
+            'trash_node = lane_detection.trash:main',
+            'parking_test_node = lane_detection.parking_test:main',
+            'traffic_test_node = lane_detection.traffic_test_node:main',
         ],
     },
 )

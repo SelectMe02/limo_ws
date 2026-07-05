@@ -1,15 +1,12 @@
-import os
-from collections import deque, Counter
+import time
 
 import cv2
 import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import CompressedImage, Image
+from sensor_msgs.msg import Image
 from std_msgs.msg import String
-from std_srvs.srv import SetBool
-
 from ultralytics import YOLO
 
 try:
@@ -17,280 +14,441 @@ try:
 except Exception:
     cuda = None
 
+try:
+    from interfaces_pkg.msg import Detection, DetectionArray
+    HAS_INTERFACES = True
+except Exception:
+    Detection = None
+    DetectionArray = None
+    HAS_INTERFACES = False
 
-class Yolov8ConeNode(Node):
+
+class Yolov8ConeLatchNode(Node):
     """
-    Cone-only YOLO node for the LIMO track mission.
+    Cone-only YOLO node for the mission FSM.
 
-    Input:
-      /camera/color/image_raw        sensor_msgs/Image
+    Main outputs:
+      /cone/blocked_lanes  std_msgs/String
+        - left,center
+        - center,right
+        - left
+        - center
+        - right
 
-    Output:
-      /cone/blocked_lanes            std_msgs/String
-          examples: "center,left", "center,right", "left", "right", ""
+      /detections interfaces_pkg/DetectionArray
+        - optional output for debug_pkg/yolov8_visualizer_node.
 
-      /cone/debug/compressed         sensor_msgs/CompressedImage
-
-    The mission_fsm_node subscribes /cone/blocked_lanes and selects the free lane.
+    Important:
+      This node latches cone lanes only after the mission FSM reaches ROTARY
+      or CONE. Earlier detections are ignored and cleared, so cones seen in
+      other parts of the track do not affect the cone mission.
     """
 
     def __init__(self):
-        super().__init__('yolov8_cone_node')
+        super().__init__('yolov8_cone_latch_node')
 
         self.bridge = CvBridge()
 
-        # -------------------------
-        # Parameters
-        # -------------------------
         self.declare_parameter('camera_topic', '/camera/color/image_raw')
-        self.declare_parameter(
-            'model_path',
-            '/home/wego/limo_ws/src/lane_detection/models/best_cone.pt'
-        )
-        self.declare_parameter('device', 'cpu')        # auto, cpu, cuda, 0
+        self.declare_parameter('model_path', '/home/wego/limo_ws/src/lane_detection/models/best_cone.pt')
+        self.declare_parameter('blocked_lanes_topic', '/cone/blocked_lanes')
+        self.declare_parameter('detections_topic', '/detections')
+        self.declare_parameter('reset_topic', '/cone/reset_latch')
+        self.declare_parameter('mission_state_topic', '/mission/state')
+        self.declare_parameter('gate_by_mission_state', True)
+        self.declare_parameter('latch_enable_states', ['ROTARY', 'CONE'])
+        self.declare_parameter('clear_latch_when_disabled', True)
+
+        self.declare_parameter('device', 'auto')          # auto, cpu, 0, cuda:0
         self.declare_parameter('conf_th', 0.45)
         self.declare_parameter('imgsz', 320)
-        self.declare_parameter('enable', True)
+        self.declare_parameter('inference_period', 0.25)  # seconds. 0.25 = 4 Hz
+        self.declare_parameter('publish_empty', True)
 
-        self.declare_parameter('blocked_lanes_topic', '/cone/blocked_lanes')
-        self.declare_parameter('debug_topic', '/cone/debug/compressed')
+        # Image x-axis lane split ratios.
+        # Tune these in RViz if cone lane classification is shifted.
+        self.declare_parameter('left_max_ratio', 0.38)
+        self.declare_parameter('center_max_ratio', 0.62)
+        self.declare_parameter('side_decision_min_cones', 2)
+        self.declare_parameter('side_decision_min_ratio', 0.30)
+        self.declare_parameter('side_decision_max_ratio', 0.70)
+        self.declare_parameter('side_decision_deadband', 0.04)
+        self.declare_parameter('freeze_after_pair', True)
+        self.declare_parameter('center_only_assume_left_time', 1.00)
 
-        # Image lane split ratio: left | center | right
-        self.declare_parameter('left_max_ratio', 0.33)
-        self.declare_parameter('center_max_ratio', 0.67)
+        camera_topic = self.get_parameter('camera_topic').value
+        blocked_topic = self.get_parameter('blocked_lanes_topic').value
+        detections_topic = self.get_parameter('detections_topic').value
+        reset_topic = self.get_parameter('reset_topic').value
+        mission_state_topic = self.get_parameter('mission_state_topic').value
 
-        # Ignore tiny far/false boxes.
-        self.declare_parameter('min_box_area', 250.0)
-        self.declare_parameter('min_box_height', 12.0)
-
-        # Optional ROI. Cone mission cones usually appear in lower/middle image.
-        # 0.0 means top of image, 1.0 means bottom.
-        self.declare_parameter('roi_y_min_ratio', 0.25)
-        self.declare_parameter('roi_y_max_ratio', 1.00)
-
-        # Debounce: lane must appear repeatedly before it is treated as blocked.
-        self.declare_parameter('history_size', 3)
-        self.declare_parameter('min_votes', 2)
-
-        self.camera_topic = self.get_parameter('camera_topic').value
         self.model_path = self.get_parameter('model_path').value
-        self.device_param = self.get_parameter('device').value
         self.conf_th = float(self.get_parameter('conf_th').value)
         self.imgsz = int(self.get_parameter('imgsz').value)
-        self.enable = bool(self.get_parameter('enable').value)
-
-        self.blocked_lanes_topic = self.get_parameter('blocked_lanes_topic').value
-        self.debug_topic = self.get_parameter('debug_topic').value
-
+        self.inference_period = float(self.get_parameter('inference_period').value)
+        self.publish_empty = bool(self.get_parameter('publish_empty').value)
         self.left_max_ratio = float(self.get_parameter('left_max_ratio').value)
         self.center_max_ratio = float(self.get_parameter('center_max_ratio').value)
-        self.min_box_area = float(self.get_parameter('min_box_area').value)
-        self.min_box_height = float(self.get_parameter('min_box_height').value)
-        self.roi_y_min_ratio = float(self.get_parameter('roi_y_min_ratio').value)
-        self.roi_y_max_ratio = float(self.get_parameter('roi_y_max_ratio').value)
+        self.side_decision_min_cones = int(self.get_parameter('side_decision_min_cones').value)
+        self.side_decision_min_ratio = float(self.get_parameter('side_decision_min_ratio').value)
+        self.side_decision_max_ratio = float(self.get_parameter('side_decision_max_ratio').value)
+        self.side_decision_deadband = float(self.get_parameter('side_decision_deadband').value)
+        self.freeze_after_pair = bool(self.get_parameter('freeze_after_pair').value)
+        self.center_only_assume_left_time = float(
+            self.get_parameter('center_only_assume_left_time').value
+        )
+        self.gate_by_mission_state = bool(self.get_parameter('gate_by_mission_state').value)
+        self.latch_enable_states = set([
+            str(x).strip().upper()
+            for x in self.get_parameter('latch_enable_states').value
+        ])
+        self.clear_latch_when_disabled = bool(self.get_parameter('clear_latch_when_disabled').value)
 
-        history_size = int(self.get_parameter('history_size').value)
-        self.min_votes = int(self.get_parameter('min_votes').value)
-        self.history = deque(maxlen=max(1, history_size))
+        self.device = self.resolve_device(str(self.get_parameter('device').value))
 
-        self.device = self.resolve_device(self.device_param)
+        self.blocked_pub = self.create_publisher(String, blocked_topic, 10)
 
-        if not os.path.exists(self.model_path):
+        if HAS_INTERFACES:
+            self.detections_pub = self.create_publisher(DetectionArray, detections_topic, 10)
+        else:
+            self.detections_pub = None
             self.get_logger().warn(
-                f'model file not found now: {self.model_path}. '
-                'If the path is wrong, pass -p model_path:=...'
+                'interfaces_pkg is not available. /detections will not be published. '
+                'debug_pkg/yolov8_visualizer_node requires interfaces_pkg.'
             )
-
-        self.get_logger().info(f'loading cone model: {self.model_path}')
-        self.model = YOLO(self.model_path)
-
-        self.blocked_pub = self.create_publisher(String, self.blocked_lanes_topic, 10)
-        self.debug_pub = self.create_publisher(CompressedImage, self.debug_topic, 10)
 
         self.image_sub = self.create_subscription(
             Image,
-            self.camera_topic,
+            camera_topic,
             self.image_callback,
             qos_profile_sensor_data,
         )
 
-        self.enable_srv = self.create_service(SetBool, '~/enable', self.enable_callback)
-
-        self.get_logger().info(
-            f'yolov8 cone node start: camera={self.camera_topic}, '
-            f'blocked_topic={self.blocked_lanes_topic}, device={self.device}'
+        self.reset_sub = self.create_subscription(
+            String,
+            reset_topic,
+            self.reset_callback,
+            10,
         )
 
-    def resolve_device(self, value):
-        text = str(value).strip().lower()
-        if text == 'auto':
+        self.state_sub = self.create_subscription(
+            String,
+            mission_state_topic,
+            self.mission_state_callback,
+            10,
+        )
+
+        self.latest_msg = None
+        self.latest_stamp = None
+        self.current_mission_state = ''
+        self.latch_armed_once = False
+        self.model = YOLO(self.model_path)
+
+        self.latched_lanes = set()
+        self.last_detected_lanes = set()
+        self.last_inference_time = 0.0
+        self.latch_frozen = False
+        self.center_only_start_time = None
+
+        self.timer = self.create_timer(self.inference_period, self.timer_callback)
+
+        self.get_logger().info(
+            f'yolov8 cone latch node start. model={self.model_path}, '
+            f'camera={camera_topic}, device={self.device}, imgsz={self.imgsz}, '
+            f'inference_period={self.inference_period}s, gate_by_state={self.gate_by_mission_state}, '
+            f'latch_enable_states={sorted(list(self.latch_enable_states))}'
+        )
+
+    def resolve_device(self, device_param):
+        device_param = device_param.strip().lower()
+
+        if device_param == 'auto':
             if cuda is not None and cuda.is_available():
-                return 0
+                return '0'
             return 'cpu'
-        if text in ('cuda', 'gpu'):
-            if cuda is not None and cuda.is_available():
-                return 0
-            self.get_logger().warn('CUDA requested but unavailable. fallback to cpu.')
-            return 'cpu'
-        if text in ('0', 'cuda:0', 'gpu:0'):
-            return 0
-        return text
 
-    def enable_callback(self, request, response):
-        self.enable = bool(request.data)
-        response.success = True
-        response.message = f'enable={self.enable}'
-        return response
+        if device_param == 'cuda':
+            return '0'
 
-    def x_to_lane(self, x_center, image_width):
-        ratio = x_center / max(float(image_width), 1.0)
-        if ratio < self.left_max_ratio:
-            return 'left'
-        if ratio < self.center_max_ratio:
-            return 'center'
-        return 'right'
+        if device_param == 'gpu':
+            return '0'
 
-    def stable_lanes(self, current_lanes):
-        self.history.append(tuple(sorted(current_lanes)))
-
-        votes = Counter()
-        for lanes in self.history:
-            for lane in lanes:
-                votes[lane] += 1
-
-        stable = set()
-        for lane in ('left', 'center', 'right'):
-            if votes[lane] >= self.min_votes:
-                stable.add(lane)
-
-        return stable
-
-    def publish_lanes(self, lanes):
-        order = ['left', 'center', 'right']
-        msg = String()
-        msg.data = ','.join([lane for lane in order if lane in lanes])
-        self.blocked_pub.publish(msg)
-        return msg.data
+        return device_param
 
     def image_callback(self, msg):
-        if not self.enable:
-            self.publish_lanes(set())
+        # Keep only the newest frame. This prevents inference backlog.
+        self.latest_msg = msg
+        self.latest_stamp = msg.header.stamp
+
+    def reset_callback(self, msg):
+        # Any message resets latch.
+        self.latched_lanes = set()
+        self.last_detected_lanes = set()
+        self.latch_frozen = False
+        self.center_only_start_time = None
+        self.get_logger().warn(f'cone latch reset: {msg.data}')
+
+    def mission_state_callback(self, msg):
+        state = msg.data.strip().upper()
+        prev_state = self.current_mission_state
+        self.current_mission_state = state
+
+        if self.is_latch_enabled():
+            if not self.latch_armed_once:
+                self.latch_armed_once = True
+                self.latched_lanes = set()
+                self.last_detected_lanes = set()
+                self.latch_frozen = False
+                self.center_only_start_time = None
+                self.get_logger().warn(
+                    f'cone latch ARMED at mission state={state}. Old cone detections cleared.'
+                )
+        else:
+            self.latch_armed_once = False
+            if self.clear_latch_when_disabled and (self.latched_lanes or self.last_detected_lanes):
+                self.latched_lanes = set()
+                self.last_detected_lanes = set()
+                self.latch_frozen = False
+                self.center_only_start_time = None
+                self.get_logger().warn(
+                    f'cone latch disabled at mission state={state}. Cone detections cleared.'
+                )
+
+        if state != prev_state:
+            self.get_logger().info(f'mission state update: {prev_state} -> {state}')
+
+    def is_latch_enabled(self):
+        if not self.gate_by_mission_state:
+            return True
+        return self.current_mission_state in self.latch_enable_states
+
+    def timer_callback(self):
+        if not self.is_latch_enabled():
+            # Before ROTARY/CONE, ignore all YOLO detections.
+            # This prevents cones from other track sections from being latched.
+            if self.clear_latch_when_disabled:
+                self.latched_lanes = set()
+                self.last_detected_lanes = set()
+                self.latch_frozen = False
+                self.center_only_start_time = None
+            self.publish_latched_lanes()
+            return
+
+        if self.latest_msg is None:
+            self.publish_latched_lanes()
             return
 
         try:
-            img = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            cv_image = self.bridge.imgmsg_to_cv2(self.latest_msg, desired_encoding='bgr8')
         except Exception as e:
             self.get_logger().error(f'cv_bridge error: {e}')
+            self.publish_latched_lanes()
             return
 
-        h, w = img.shape[:2]
-        y_min = int(h * self.roi_y_min_ratio)
-        y_max = int(h * self.roi_y_max_ratio)
-
-        current_lanes = set()
-        debug = img.copy()
-
         try:
+            use_half = str(self.device) != 'cpu'
             results_list = self.model.predict(
-                source=img,
+                source=cv_image,
                 verbose=False,
                 stream=False,
                 conf=self.conf_th,
-                imgsz=self.imgsz,
                 device=self.device,
+                imgsz=self.imgsz,
+                half=use_half,
             )
         except Exception as e:
-            self.get_logger().error(f'yolo predict error: {e}')
-            self.publish_lanes(set())
+            self.get_logger().error(f'YOLO predict error: {e}')
+            self.publish_latched_lanes()
             return
+
+        detected_lanes = set()
+        cone_centers = []
+        detections_msg = None
+
+        if HAS_INTERFACES:
+            detections_msg = DetectionArray()
+            detections_msg.header = self.latest_msg.header
 
         if results_list:
             results = results_list[0].cpu()
-            boxes = results.boxes
+            height, width = results.orig_img.shape[:2]
+            class_names = results.names
 
-            if boxes is not None:
-                for box in boxes:
-                    conf = float(box.conf[0]) if hasattr(box.conf, '__len__') else float(box.conf)
-                    xyxy = box.xyxy[0].tolist()
-                    x1, y1, x2, y2 = [float(v) for v in xyxy]
+            if results.boxes is not None:
+                for box in results.boxes:
+                    cls_id = int(box.cls)
+                    score = float(box.conf)
 
-                    bw = x2 - x1
-                    bh = y2 - y1
-                    area = bw * bh
-                    cx = (x1 + x2) * 0.5
-                    cy = (y1 + y2) * 0.5
+                    xywh = box.xywh[0]
+                    cx = float(xywh[0])
+                    cy = float(xywh[1])
+                    bw = float(xywh[2])
+                    bh = float(xywh[3])
 
-                    if area < self.min_box_area:
-                        continue
-                    if bh < self.min_box_height:
-                        continue
-                    if not (y_min <= cy <= y_max):
-                        continue
+                    cone_centers.append(cx)
 
-                    lane = self.x_to_lane(cx, w)
-                    current_lanes.add(lane)
+                    if HAS_INTERFACES:
+                        det = Detection()
+                        det.class_id = cls_id
+                        det.class_name = str(class_names.get(cls_id, f'class_{cls_id}'))
+                        det.score = score
+                        det.bbox.center.position.x = cx
+                        det.bbox.center.position.y = cy
+                        det.bbox.size.x = bw
+                        det.bbox.size.y = bh
+                        detections_msg.detections.append(det)
 
-                    color = (0, 255, 255)
-                    if lane == 'left':
-                        color = (255, 0, 0)
-                    elif lane == 'center':
-                        color = (0, 255, 255)
-                    elif lane == 'right':
-                        color = (0, 255, 0)
+            detected_lanes = self.classify_lanes_from_cones(cone_centers, width)
 
-                    cv2.rectangle(debug, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-                    cv2.putText(
-                        debug,
-                        f'{lane} {conf:.2f}',
-                        (int(x1), max(20, int(y1) - 5)),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.55,
-                        color,
-                        2,
-                    )
+        self.last_detected_lanes = detected_lanes
 
-        stable = self.stable_lanes(current_lanes)
-        lane_text = self.publish_lanes(stable)
+        # Latch with freeze logic.
+        # Once center+left or center+right is fixed, later opposite-side detections are ignored.
+        before = set(self.latched_lanes)
+        changed = self.update_cone_latch(detected_lanes)
 
-        # Draw lane split and ROI.
-        x_left = int(w * self.left_max_ratio)
-        x_right = int(w * self.center_max_ratio)
-        cv2.line(debug, (x_left, 0), (x_left, h), (255, 255, 255), 1)
-        cv2.line(debug, (x_right, 0), (x_right, h), (255, 255, 255), 1)
-        cv2.rectangle(debug, (0, y_min), (w - 1, y_max - 1), (255, 255, 255), 1)
-        cv2.putText(
-            debug,
-            f'blocked={lane_text if lane_text else "none"}',
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 0, 255),
-            2,
+        if changed:
+            self.get_logger().warn(
+                f'cone latch update: detected={self.format_lanes(detected_lanes)}, '
+                f'latched={self.format_lanes(self.latched_lanes)}, '
+                f'frozen={self.latch_frozen}'
+            )
+
+        if detections_msg is not None and self.detections_pub is not None:
+            self.detections_pub.publish(detections_msg)
+
+        self.publish_latched_lanes()
+
+    def classify_lanes_from_cones(self, cone_centers, width):
+        img_width = max(float(width), 1.0)
+        ratios = [float(cx) / img_width for cx in cone_centers]
+
+        # center-only fallback을 위해, 콘이 1개만 보이더라도 화면 중앙 영역이면 center로 인정한다.
+        # 좌/우 판단은 기존처럼 side_decision_min_cones 개수 이상일 때만 수행한다.
+        if len(cone_centers) < self.side_decision_min_cones:
+            for ratio in ratios:
+                if self.side_decision_min_ratio <= ratio <= self.side_decision_max_ratio:
+                    return {'center'}
+            return set()
+
+        lanes = {'center'}
+        center_gate_ratios = [
+            ratio for ratio in ratios
+            if self.side_decision_min_ratio <= ratio <= self.side_decision_max_ratio
+        ]
+
+        if len(center_gate_ratios) >= self.side_decision_min_cones:
+            pair_ratios = center_gate_ratios
+        else:
+            sorted_by_center = sorted(ratios, key=lambda ratio: abs(ratio - 0.5))
+            pair_ratios = sorted_by_center[:self.side_decision_min_cones]
+
+        pair_center_ratio = sum(pair_ratios) / float(len(pair_ratios))
+        if pair_center_ratio < 0.5 - self.side_decision_deadband:
+            lanes.add('left')
+        elif pair_center_ratio > 0.5 + self.side_decision_deadband:
+            lanes.add('right')
+
+        return lanes
+
+    def has_center_pair(self, lanes):
+        return (
+            'center' in lanes and
+            (
+                ('left' in lanes and 'right' not in lanes) or
+                ('right' in lanes and 'left' not in lanes)
+            )
         )
 
-        try:
-            debug_msg = self.bridge.cv2_to_compressed_imgmsg(debug, dst_format='jpg')
-            self.debug_pub.publish(debug_msg)
-        except Exception as e:
-            self.get_logger().warn(f'debug publish error: {e}')
+    def finalize_pair_if_possible(self, lanes):
+        """
+        center+left 또는 center+right 중 하나가 확정되면 그 2개만 저장한다.
+        left/right가 둘 다 섞여 있으면, 이미 저장된 쪽을 우선한다.
+        """
+        lanes = set(lanes)
 
-        try:
-            cv2.imshow('yolov8_cone_debug', debug)
-            cv2.waitKey(1)
-        except Exception:
-            pass
+        if 'center' not in lanes:
+            return None
 
-    def destroy_node(self):
-        try:
-            cv2.destroyAllWindows()
-        except Exception:
-            pass
-        super().destroy_node()
+        # 이미 center+right가 먼저 잡혀 있었다면 right 유지
+        if 'right' in self.latched_lanes and 'left' not in self.latched_lanes:
+            return {'center', 'right'}
+
+        # 이미 center+left가 먼저 잡혀 있었다면 left 유지
+        if 'left' in self.latched_lanes and 'right' not in self.latched_lanes:
+            return {'center', 'left'}
+
+        if 'right' in lanes and 'left' not in lanes:
+            return {'center', 'right'}
+
+        if 'left' in lanes and 'right' not in lanes:
+            return {'center', 'left'}
+
+        return None
+
+    def update_cone_latch(self, detected_lanes):
+        now = time.monotonic()
+
+        # 이미 center+left 또는 center+right가 확정되면 이후 검출은 무시
+        if self.freeze_after_pair and self.latch_frozen:
+            return False
+
+        before = set(self.latched_lanes)
+
+        if detected_lanes:
+            combined = self.latched_lanes | detected_lanes
+
+            pair = self.finalize_pair_if_possible(combined)
+            if pair is not None:
+                self.latched_lanes = pair
+                self.latch_frozen = True
+                self.center_only_start_time = None
+            else:
+                self.latched_lanes = combined
+
+                if self.latched_lanes == {'center'}:
+                    if self.center_only_start_time is None:
+                        self.center_only_start_time = now
+                else:
+                    self.center_only_start_time = None
+
+        # center만 1초 이상 지속되면 center+left로 확정
+        if (
+            self.freeze_after_pair and
+            not self.latch_frozen and
+            self.latched_lanes == {'center'}
+        ):
+            if self.center_only_start_time is None:
+                self.center_only_start_time = now
+
+            elapsed = now - self.center_only_start_time
+            if elapsed >= self.center_only_assume_left_time:
+                self.latched_lanes = {'center', 'left'}
+                self.latch_frozen = True
+                self.get_logger().warn(
+                    f'cone center-only timeout: assume left. '
+                    f'latched={self.format_lanes(self.latched_lanes)}'
+                )
+
+        return self.latched_lanes != before
+
+    def format_lanes(self, lanes):
+        order = ['left', 'center', 'right']
+        return ','.join([lane for lane in order if lane in lanes])
+
+    def publish_latched_lanes(self):
+        if not self.latched_lanes and not self.publish_empty:
+            return
+
+        msg = String()
+        msg.data = self.format_lanes(self.latched_lanes)
+        self.blocked_pub.publish(msg)
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = Yolov8ConeNode()
+    node = Yolov8ConeLatchNode()
+
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

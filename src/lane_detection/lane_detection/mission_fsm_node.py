@@ -169,6 +169,26 @@ def poly_x(fit, y):
     return fit[0] * y * y + fit[1] * y + fit[2]
 
 
+def normalize_deg(angle_deg):
+    while angle_deg > 180.0:
+        angle_deg -= 360.0
+    while angle_deg < -180.0:
+        angle_deg += 360.0
+    return angle_deg
+
+
+def angle_in_range(angle_deg, min_deg, max_deg):
+    """Return True when angle_deg is inside [min_deg, max_deg]. Supports wrap-around."""
+    angle_deg = normalize_deg(angle_deg)
+    min_deg = normalize_deg(min_deg)
+    max_deg = normalize_deg(max_deg)
+
+    if min_deg <= max_deg:
+        return min_deg <= angle_deg <= max_deg
+
+    return angle_deg >= min_deg or angle_deg <= max_deg
+
+
 
 
 # ============================================================
@@ -355,9 +375,45 @@ class StanleyMissionFSMNode(Node):
         self.declare_parameter('cone_lidar_min_hits', 3)
         self.declare_parameter('cone_lidar_clear_frames', 3)
         self.declare_parameter('cone_extra_yaw', 0.28)
-        # ROTARY부터 들어오는 고깔 정보만 저장한다.
-        # PEDESTRIAN/BOX1/TUNNEL에서 들어온 고깔 정보는 전부 무시한다.
-        self.declare_parameter('cone_accept_states', ['ROTARY', 'CONE'])
+
+        # -------------------------
+        # Simple cone force-shift params
+        # -------------------------
+        # CONE 상태에서 target lane이 left/right로 확정되면
+        # 일정 시간 동안 차선추종을 무시하고 강제 조향한 뒤, 다시 정상 차선추종으로 복귀한다.
+        self.declare_parameter('cone_simple_force_enabled', True)
+        self.declare_parameter('cone_force_duration', 2.00)
+        self.declare_parameter('cone_force_speed', 0.40)
+        self.declare_parameter('cone_force_yaw', 0.45)
+        self.declare_parameter('cone_after_force_speed_limit', 0.45)
+
+        # 일반적으로 /cmd_vel.angular.z 양수가 왼쪽 회전이다.
+        # 실제 차량이 반대로 움직이면 False로 바꿔서 테스트한다.
+        self.declare_parameter('cone_left_yaw_positive', True)
+
+        # 왼쪽 회피 시 콘은 오른쪽에 남으므로 오른쪽 0~120도 sector를 본다.
+        # 오른쪽 회피 시 콘은 왼쪽에 남으므로 왼쪽 -120~0도 sector를 본다.
+        self.declare_parameter('cone_side_distance', 0.50)
+        self.declare_parameter('cone_side_clear_frames', 3)
+        self.declare_parameter('cone_side_min_clusters', 2)
+        self.declare_parameter('cone_side_cluster_gap_m', 0.12)
+        self.declare_parameter('cone_side_cluster_min_points', 1)
+
+        # Cone latch 안정화:
+        # center+right 또는 center+left 두 위치가 확정되면 이후 새 위치는 추가하지 않는다.
+        # center만 계속 보이면 left가 잘 안 보이는 상황으로 보고 center+left로 보정한다.
+        self.declare_parameter('cone_freeze_after_pair', True)
+        self.declare_parameter('cone_center_only_assume_left_time', 999.0)
+        self.declare_parameter('cone_center_only_auto_assume_left', False)
+
+        self.declare_parameter('cone_right_angle_min_deg', 0.0)
+        self.declare_parameter('cone_right_angle_max_deg', 120.0)
+        self.declare_parameter('cone_left_angle_min_deg', -120.0)
+        self.declare_parameter('cone_left_angle_max_deg', 0.0)
+
+        # CONE 상태부터 들어오는 고깔 정보만 저장한다.
+        # ROTARY에서 너무 일찍 들어온 고깔 정보는 오판단/freeze 원인이 될 수 있으므로 무시한다.
+        self.declare_parameter('cone_accept_states', ['CONE'])
         self.declare_parameter('parking_finish_ratio', 0.22)
 
         # 미션별 속도 제한. 실제 제어 계산은 원래 Stanley 제어가 하고,
@@ -373,8 +429,8 @@ class StanleyMissionFSMNode(Node):
         # -------------------------
         # Tight LiDAR sector params
         # -------------------------
-        # 보행자: 전방 ±20도, 0.50m 이내만 정지 대상으로 본다.
-        self.declare_parameter('ped_front_angle_deg', 35.0)
+        # 보행자: 전방 ±35도, 0.50m 이내만 정지 대상으로 본다.
+        self.declare_parameter('ped_front_angle_deg', 40.0)
         self.declare_parameter('ped_front_distance', 0.50)
         self.declare_parameter('ped_front_min_hits', 2)
         self.declare_parameter('ped_front_wall_width_threshold', 0.30)
@@ -442,10 +498,14 @@ class StanleyMissionFSMNode(Node):
         self.declare_parameter('tunnel_wall_x_max', 0.70)
         self.declare_parameter('tunnel_wall_min_hits', 3)
         self.declare_parameter('tunnel_exit_front_angle_deg', 90.0)
+        # 터널 탈출 판단은 전방 전체(-90~90)가 아니라 측면 밴드만 본다.
+        # 기본값: -90~-60, 60~90도.
+        self.declare_parameter('tunnel_exit_side_angle_min_abs_deg', 60.0)
+        self.declare_parameter('tunnel_exit_side_angle_max_abs_deg', 90.0)
         self.declare_parameter('tunnel_center_x_min', 0.05)
         self.declare_parameter('tunnel_center_x_max', 0.60)
         self.declare_parameter('tunnel_wall_center_gain', 3.0)
-        self.declare_parameter('tunnel_exit_drive_distance', 0.80)
+        self.declare_parameter('tunnel_exit_drive_distance', 1.25)
 
         # 회전교차로 차량: 사용자가 보낸 TrackVehicleFollowNode의 전방 차량 추종 구조를 반영한다.
         self.declare_parameter('rotary_front_x_min', 0.15)
@@ -493,6 +553,33 @@ class StanleyMissionFSMNode(Node):
         self.cone_lidar_min_hits = int(self.get_parameter('cone_lidar_min_hits').value)
         self.cone_lidar_clear_frames = int(self.get_parameter('cone_lidar_clear_frames').value)
         self.cone_extra_yaw = float(self.get_parameter('cone_extra_yaw').value)
+
+        self.cone_simple_force_enabled = bool(self.get_parameter('cone_simple_force_enabled').value)
+        self.cone_force_duration = float(self.get_parameter('cone_force_duration').value)
+        self.cone_force_speed = float(self.get_parameter('cone_force_speed').value)
+        self.cone_force_yaw = float(self.get_parameter('cone_force_yaw').value)
+        self.cone_after_force_speed_limit = float(self.get_parameter('cone_after_force_speed_limit').value)
+        if self.cone_force_speed <= 0.0:
+            self.cone_force_speed = self.cone_after_force_speed_limit
+        self.cone_left_yaw_positive = bool(self.get_parameter('cone_left_yaw_positive').value)
+
+        self.cone_side_distance = float(self.get_parameter('cone_side_distance').value)
+        self.cone_side_clear_frames = int(self.get_parameter('cone_side_clear_frames').value)
+        self.cone_side_min_clusters = int(self.get_parameter('cone_side_min_clusters').value)
+        self.cone_side_cluster_gap_m = float(self.get_parameter('cone_side_cluster_gap_m').value)
+        self.cone_side_cluster_min_points = int(self.get_parameter('cone_side_cluster_min_points').value)
+        self.cone_freeze_after_pair = bool(self.get_parameter('cone_freeze_after_pair').value)
+        self.cone_center_only_assume_left_time = float(
+            self.get_parameter('cone_center_only_assume_left_time').value
+        )
+        self.cone_center_only_auto_assume_left = bool(
+            self.get_parameter('cone_center_only_auto_assume_left').value
+        )
+        self.cone_right_angle_min_deg = float(self.get_parameter('cone_right_angle_min_deg').value)
+        self.cone_right_angle_max_deg = float(self.get_parameter('cone_right_angle_max_deg').value)
+        self.cone_left_angle_min_deg = float(self.get_parameter('cone_left_angle_min_deg').value)
+        self.cone_left_angle_max_deg = float(self.get_parameter('cone_left_angle_max_deg').value)
+
         self.cone_accept_states = set([
             str(x).strip().upper()
             for x in self.get_parameter('cone_accept_states').value
@@ -563,6 +650,12 @@ class StanleyMissionFSMNode(Node):
         self.tunnel_wall_x_max = float(self.get_parameter('tunnel_wall_x_max').value)
         self.tunnel_wall_min_hits = int(self.get_parameter('tunnel_wall_min_hits').value)
         self.tunnel_exit_front_angle_deg = float(self.get_parameter('tunnel_exit_front_angle_deg').value)
+        self.tunnel_exit_side_angle_min_abs_deg = float(
+            self.get_parameter('tunnel_exit_side_angle_min_abs_deg').value
+        )
+        self.tunnel_exit_side_angle_max_abs_deg = float(
+            self.get_parameter('tunnel_exit_side_angle_max_abs_deg').value
+        )
         self.tunnel_center_x_min = float(self.get_parameter('tunnel_center_x_min').value)
         self.tunnel_center_x_max = float(self.get_parameter('tunnel_center_x_max').value)
         self.tunnel_wall_center_gain = float(self.get_parameter('tunnel_wall_center_gain').value)
@@ -673,8 +766,11 @@ class StanleyMissionFSMNode(Node):
         self.cone_target_votes = []
         self.cone_first_latch_time = None
         self.last_cone_msg_time = 0.0
+        self.cone_center_only_start_time = None
+        self.cone_latch_frozen = False
         self.cone_recover_start_time = None
         self.cone_lidar_clear_count = 0
+        self.reset_simple_cone_vars()
 
         self.parking_started = False
         self.parking_step_index = 0
@@ -1255,6 +1351,7 @@ class StanleyMissionFSMNode(Node):
                 cone_pair_reference_x = prev_x
 
         if (
+            not self.cone_simple_force_enabled and
             self.state == Mission.CONE and
             self.cone_latched and
             self.cone_target_lane in ('left', 'right')
@@ -1262,6 +1359,7 @@ class StanleyMissionFSMNode(Node):
             cone_lidar_active, _, _, _ = self.cone_lidar_side_obstacle()
 
         if (
+            not self.cone_simple_force_enabled and
             self.state == Mission.CONE and
             self.cone_latched and
             self.cone_recover_start_time is not None and
@@ -1296,6 +1394,7 @@ class StanleyMissionFSMNode(Node):
         best_pair = None
         if (
             center_fit is None and
+            not self.cone_simple_force_enabled and
             self.state == Mission.CONE and
             self.cone_latched and
             self.cone_target_lane in ('left', 'right')
@@ -1314,6 +1413,7 @@ class StanleyMissionFSMNode(Node):
         if (
             center_fit is None and
             best_pair is None and
+            not self.cone_simple_force_enabled and
             self.state == Mission.CONE and
             self.cone_latched and
             self.cone_target_lane in ('left', 'right')
@@ -1768,8 +1868,9 @@ class StanleyMissionFSMNode(Node):
         self.rotary_db.reset()
         if new_state == Mission.ROTARY:
             self.rotary_vehicle_seen = False
+            self.reset_simple_cone_vars()
             # 핵심: ROTARY에 들어오는 순간 이전 구간에서 잘못 들어온 고깔 latch를 모두 지운다.
-            # 이후 ROTARY/CONE 상태에서 들어오는 고깔 정보만 저장한다.
+            # 고깔 정보는 CONE 상태에서만 저장한다.
             self.cone_latched = False
             self.cone_latched_lanes = set()
             self.cone_target_lane = 'center'
@@ -1777,15 +1878,26 @@ class StanleyMissionFSMNode(Node):
             self.cone_target_votes = []
             self.cone_first_latch_time = None
             self.last_cone_msg_time = 0.0
+            self.cone_center_only_start_time = None
+            self.cone_latch_frozen = False
             self.cone_recover_start_time = None
             self.cone_lidar_clear_count = 0
 
-        # CONE에 들어올 때는 ROTARY에서 이미 저장한 고깔 정보를 유지해야 한다.
-        # 따라서 여기서 cone latch를 지우지 않는다.
+        # CONE에 들어오는 순간부터 고깔 정보를 새로 받는다.
+        # ROTARY에서 너무 일찍 들어온 오판단을 보존하지 않는다.
         if new_state == Mission.CONE:
+            self.cone_latched = False
+            self.cone_latched_lanes = set()
+            self.cone_target_lane = 'center'
             self.cone_target_locked = False
+            self.cone_target_votes = []
+            self.cone_first_latch_time = None
+            self.last_cone_msg_time = 0.0
+            self.cone_center_only_start_time = None
+            self.cone_latch_frozen = False
             self.cone_recover_start_time = None
             self.cone_lidar_clear_count = 0
+            self.reset_simple_cone_vars()
 
         self.parking_started = False
         self.parking_step_index = 0
@@ -1846,8 +1958,12 @@ class StanleyMissionFSMNode(Node):
             self.cone_target_locked = False
             self.cone_target_votes = []
             self.cone_first_latch_time = None
+            self.last_cone_msg_time = 0.0
+            self.cone_center_only_start_time = None
+            self.cone_latch_frozen = False
             self.cone_recover_start_time = None
             self.cone_lidar_clear_count = 0
+            self.reset_simple_cone_vars()
             self.get_logger().warn('cone latch reset by manual command')
         elif cmd in aliases:
             self.set_state(aliases[cmd], '(manual set)')
@@ -2538,8 +2654,9 @@ class StanleyMissionFSMNode(Node):
         return int(x0), int(x1)
 
     def cone_callback(self, msg):
-        # ROTARY 상태에 들어오기 전까지 들어오는 고깔 정보는 전부 버린다.
-        # 이유: 다른 트랙 구간에서도 고깔이 카메라에 잡힐 수 있기 때문이다.
+        # CONE 상태에 들어오기 전까지 들어오는 고깔 정보는 전부 버린다.
+        # ROTARY에서는 차량 헤딩이 틀어져 있거나 노란 기준선이 안정적으로 잡히기 전일 수 있으므로
+        # 고깔 위치를 latch/freeze하지 않는다.
         if self.state not in self.cone_accept_states:
             return
 
@@ -2554,23 +2671,208 @@ class StanleyMissionFSMNode(Node):
         if len(lanes) == 0:
             return
 
-        vote = self.infer_cone_target_from_lanes(lanes)
-        self.record_cone_target_vote(vote)
+        now = time.monotonic()
 
-        # 핵심: ROTARY/CONE 상태에서 한 번이라도 본 고깔 차선은 CONE 상태가 끝날 때까지 유지한다.
-        self.cone_latched_lanes |= lanes
+        # 테스트 코드에서 정상 동작했던 방식과 동일하게,
+        # center+right -> target left, center+left -> target right를 직접 lock한다.
+        # 한 번 target이 left/right로 lock되면 이후 차량 진동으로 들어오는 추가 검출은 무시한다.
+        if self.cone_target_locked and self.cone_target_lane in ('left', 'right'):
+            self.last_cone_msg_time = now
+            self.get_logger().warn(
+                f'cone direct latch ignore after lock: raw={raw}, '
+                f'latched={sorted(list(self.cone_latched_lanes))}, '
+                f'target={self.cone_target_lane}'
+            )
+            return
+
+        before_target = self.cone_target_lane
+
         self.cone_latched = True
-        self.last_cone_msg_time = time.monotonic()
+        self.last_cone_msg_time = now
 
         if self.cone_first_latch_time is None:
-            self.cone_first_latch_time = self.last_cone_msg_time
+            self.cone_first_latch_time = now
 
-        if not self.cone_target_locked:
-            self.cone_target_lane = self.choose_cone_target_lane(self.cone_latched_lanes)
+        center_only_assumed = False
+
+        # 핵심 1: center + right cone -> 왼쪽 회피
+        if 'center' in lanes and 'right' in lanes and 'left' not in lanes:
+            self.cone_latched_lanes = {'center', 'right'}
+            self.cone_target_lane = 'left'
+            self.cone_target_locked = True
+            self.cone_target_votes = ['left']
+            self.cone_latch_frozen = bool(self.cone_freeze_after_pair)
+            self.cone_center_only_start_time = None
+
+        # 핵심 2: center + left cone -> 오른쪽 회피
+        elif 'center' in lanes and 'left' in lanes and 'right' not in lanes:
+            self.cone_latched_lanes = {'center', 'left'}
+            self.cone_target_lane = 'right'
+            self.cone_target_locked = True
+            self.cone_target_votes = ['right']
+            self.cone_latch_frozen = bool(self.cone_freeze_after_pair)
+            self.cone_center_only_start_time = None
+
+        # YOLO 노드가 right만 보냈을 때도 center+right로 간주해서 왼쪽 회피
+        elif 'right' in lanes and 'left' not in lanes:
+            self.cone_latched_lanes = {'center', 'right'}
+            self.cone_target_lane = 'left'
+            self.cone_target_locked = True
+            self.cone_target_votes = ['left']
+            self.cone_latch_frozen = bool(self.cone_freeze_after_pair)
+            self.cone_center_only_start_time = None
+
+        # YOLO 노드가 left만 보냈을 때도 center+left로 간주해서 오른쪽 회피
+        elif 'left' in lanes and 'right' not in lanes:
+            self.cone_latched_lanes = {'center', 'left'}
+            self.cone_target_lane = 'right'
+            self.cone_target_locked = True
+            self.cone_target_votes = ['right']
+            self.cone_latch_frozen = bool(self.cone_freeze_after_pair)
+            self.cone_center_only_start_time = None
+
+        # center만 들어온 경우:
+        # 기본값에서는 노란선 기반 center 판단을 사용하므로 left로 자동 가정하지 않는다.
+        # 필요할 때만 cone_center_only_auto_assume_left:=true로 켜서 기존 보정 로직을 사용한다.
+        elif lanes == {'center'}:
+            self.cone_latched_lanes = {'center'}
+            self.cone_latch_frozen = False
+
+            if self.cone_center_only_auto_assume_left:
+                if self.cone_center_only_start_time is None:
+                    self.cone_center_only_start_time = now
+
+                center_elapsed = now - self.cone_center_only_start_time
+
+                if center_elapsed >= self.cone_center_only_assume_left_time:
+                    self.cone_latched_lanes = {'center', 'left'}
+                    self.cone_target_lane = 'right'
+                    self.cone_target_locked = True
+                    self.cone_target_votes = ['right']
+                    self.cone_latch_frozen = bool(self.cone_freeze_after_pair)
+                    self.cone_center_only_start_time = None
+                    center_only_assumed = True
+
+                    self.get_logger().warn(
+                        'cone center-only timeout: assume center+left -> target=right'
+                    )
+                else:
+                    self.cone_target_lane = 'center'
+                    self.cone_target_locked = False
+            else:
+                self.cone_center_only_start_time = None
+                self.cone_target_lane = 'center'
+                self.cone_target_locked = False
+                self.cone_target_votes = ['center']
+
+        else:
+            # left, center, right가 동시에 들어오면 모호하므로 target 확정 전에는 무시한다.
+            self.get_logger().warn(
+                f'cone direct latch ambiguous ignore: raw={raw}, '
+                f'lanes={sorted(list(lanes))}, '
+                f'latched={sorted(list(self.cone_latched_lanes))}, '
+                f'target={self.cone_target_lane}'
+            )
+            return
 
         self.get_logger().warn(
-            f'cone latch update: raw={raw}, latched={sorted(list(self.cone_latched_lanes))}, '
-            f'target={self.cone_target_lane}, votes={self.cone_target_votes}'
+            f'cone direct latch update: raw={raw}, '
+            f'latched={sorted(list(self.cone_latched_lanes))}, '
+            f'target={self.cone_target_lane}, '
+            f'locked={self.cone_target_locked}, '
+            f'frozen={self.cone_latch_frozen}, '
+            f'center_only_assumed={center_only_assumed}, '
+            f'votes={self.cone_target_votes}'
+        )
+
+        # 테스트 코드에서 정상 동작했던 핵심 구조:
+        # target이 left/right로 확정되는 순간 simple force 상태를 즉시 reset/start한다.
+        if self.simple_cone_avoid_active() and before_target != self.cone_target_lane:
+            self.reset_simple_cone_vars()
+            self.ensure_simple_cone_started()
+
+    def cone_latched_has_center_side_pair(self):
+        return (
+            'center' in self.cone_latched_lanes and
+            ('left' in self.cone_latched_lanes or 'right' in self.cone_latched_lanes)
+        )
+
+    def filter_cone_lanes_for_latch(self, lanes):
+        """
+        고깔 latch 안정화 필터.
+
+        목적:
+          - center+right 또는 center+left가 이미 확정되면 새로운 위치를 추가하지 않는다.
+          - 아직 center만 있는 상태에서 left/right 둘 다 동시에 들어오면 진동에 의한 오검출로 보고
+            side 추가를 보류한다.
+          - center만 1초 이상 유지되는 경우는 cone_callback에서 center+left로 보정한다.
+        """
+        sides = {'left', 'right'}
+        current_sides = self.cone_latched_lanes & sides
+        raw_sides = lanes & sides
+
+        if self.cone_latched_has_center_side_pair():
+            return set()
+
+        filtered = set()
+
+        if 'center' in lanes:
+            filtered.add('center')
+
+        # 이미 side 하나가 latch되어 있다면, 반대편 side는 추가하지 않는다.
+        # 이후 center가 들어오면 기존 side와 center로 pair를 완성한다.
+        if len(current_sides) == 1:
+            existing_side = next(iter(current_sides))
+            if existing_side in lanes:
+                filtered.add(existing_side)
+            return filtered
+
+        if len(current_sides) >= 2:
+            return filtered
+
+        # 아직 side가 없다.
+        if len(raw_sides) == 1:
+            filtered |= raw_sides
+        elif len(raw_sides) >= 2:
+            # left/right가 동시에 들어오면 모호하므로 side는 추가하지 않는다.
+            pass
+
+        return filtered
+
+    def update_cone_center_only_timeout(self):
+        """
+        cone_callback이 한 번만 들어오고 이후 같은 center-only 메시지가 반복되지 않아도,
+        CONE 상태에서 center-only가 1초 이상 유지되면 center+left로 보정한다.
+
+        현재 기본 설정에서는 노란선 기반 center 판단을 사용하므로 이 자동 보정은 끈다.
+        """
+        if not self.cone_center_only_auto_assume_left:
+            return
+
+        if self.cone_latch_frozen:
+            return
+
+        if self.cone_latched_lanes != {'center'}:
+            return
+
+        if self.cone_center_only_start_time is None:
+            self.cone_center_only_start_time = time.monotonic()
+            return
+
+        now = time.monotonic()
+        if now - self.cone_center_only_start_time < self.cone_center_only_assume_left_time:
+            return
+
+        self.cone_latched_lanes.add('left')
+        self.cone_latch_frozen = bool(self.cone_freeze_after_pair)
+        self.cone_target_lane = 'right'
+        self.cone_target_locked = True
+        self.cone_target_votes.append('right')
+        self.last_cone_msg_time = now
+
+        self.get_logger().warn(
+            f'cone center-only timeout in handler: assume left cone. '
+            f'latched={sorted(list(self.cone_latched_lanes))}, target={self.cone_target_lane}'
         )
 
     def infer_cone_target_from_lanes(self, lanes):
@@ -2626,6 +2928,13 @@ class StanleyMissionFSMNode(Node):
             self.cone_lidar_clear_count = 0
             return False, 'none', 0, 9.9
 
+        # simple force-shift 모드에서는 사용자가 지정한 sector를 쓴다.
+        # 왼쪽 회피: 오른쪽 0~120도, 오른쪽 회피: 왼쪽 -120~0도.
+        if self.cone_simple_force_enabled:
+            side, cluster_count, point_count, nearest = self.side_cone_clusters()
+            active = cluster_count >= self.cone_side_min_clusters
+            return active, side, cluster_count, nearest
+
         # target_lane은 주행할 빈 방향이다. 콘은 그 반대편 옆 섹터에 남는다.
         if self.cone_target_lane == 'left':
             side = 'right'
@@ -2655,6 +2964,163 @@ class StanleyMissionFSMNode(Node):
 
         active = hits >= self.cone_lidar_min_hits
         return active, side, hits, nearest
+
+    def reset_simple_cone_vars(self):
+        self.simple_phase = 'WAIT_TARGET'
+        self.simple_target = None
+        self.simple_force_start_time = None
+        self.simple_side_seen = False
+        self.simple_side_clear_count = 0
+        self.simple_last_cluster_count = 0
+        self.simple_last_nearest = 9.9
+        self.simple_last_side_name = 'none'
+
+    def simple_cone_avoid_active(self):
+        return (
+            self.cone_simple_force_enabled and
+            self.state == Mission.CONE and
+            self.cone_latched and
+            self.cone_target_lane in ('left', 'right')
+        )
+
+    def ensure_simple_cone_started(self):
+        if not self.simple_cone_avoid_active():
+            return
+
+        target_changed = self.simple_target != self.cone_target_lane
+        if self.simple_force_start_time is None or target_changed:
+            self.simple_target = self.cone_target_lane
+            self.simple_force_start_time = time.monotonic()
+            self.simple_phase = 'FORCE_SHIFT'
+            self.simple_side_seen = False
+            self.simple_side_clear_count = 0
+            self.simple_last_cluster_count = 0
+            self.simple_last_nearest = 9.9
+            self.simple_last_side_name = 'right' if self.simple_target == 'left' else 'left'
+            self.prev_speed = 0.0
+            self.prev_cte_norm = 0.0
+
+            self.get_logger().warn(
+                f'SIMPLE_CONE_START target={self.simple_target} '
+                f'watch_side={self.simple_last_side_name} '
+                f'latched={sorted(list(self.cone_latched_lanes))}'
+            )
+
+    def forced_cone_linear_speed(self):
+        speed = float(self.cone_force_speed)
+        if self.cone_after_force_speed_limit > 0.0:
+            speed = min(speed, self.cone_after_force_speed_limit)
+        return max(0.0, speed)
+
+    def forced_cone_yaw_for_target(self):
+        yaw = abs(self.cone_force_yaw)
+
+        if self.cone_target_lane == 'left':
+            return yaw if self.cone_left_yaw_positive else -yaw
+
+        if self.cone_target_lane == 'right':
+            return -yaw if self.cone_left_yaw_positive else yaw
+
+        return 0.0
+
+    def watched_side_for_cone_target(self):
+        # 왼쪽 도로로 회피하면 콘은 오른쪽에 남아 있으므로 오른쪽 sector를 본다.
+        # 오른쪽 도로로 회피하면 콘은 왼쪽에 남아 있으므로 왼쪽 sector를 본다.
+        if self.cone_target_lane == 'left':
+            return 'right'
+
+        if self.cone_target_lane == 'right':
+            return 'left'
+
+        return 'none'
+
+    def cone_sector_limits_for_side(self, side):
+        if side == 'right':
+            return self.cone_right_angle_min_deg, self.cone_right_angle_max_deg
+
+        if side == 'left':
+            return self.cone_left_angle_min_deg, self.cone_left_angle_max_deg
+
+        return 0.0, 0.0
+
+    def side_cone_clusters(self):
+        side = self.watched_side_for_cone_target()
+        angle_min, angle_max = self.cone_sector_limits_for_side(side)
+
+        pts = []
+        for x, y, dist, angle in self.lidar_points:
+            if dist <= 0.0 or dist > self.cone_side_distance:
+                continue
+
+            angle_deg = normalize_deg(math.degrees(angle))
+            if not angle_in_range(angle_deg, angle_min, angle_max):
+                continue
+
+            pts.append((angle_deg, x, y, dist))
+
+        if len(pts) == 0:
+            return side, 0, 0, 9.9
+
+        pts.sort(key=lambda p: p[0])
+
+        clusters = []
+        current = [pts[0]]
+        prev = pts[0]
+
+        for p in pts[1:]:
+            _, x, y, _ = p
+            _, px, py, _ = prev
+            gap = math.hypot(x - px, y - py)
+
+            if gap <= self.cone_side_cluster_gap_m:
+                current.append(p)
+            else:
+                if len(current) >= self.cone_side_cluster_min_points:
+                    clusters.append(current)
+
+                current = [p]
+
+            prev = p
+
+        if len(current) >= self.cone_side_cluster_min_points:
+            clusters.append(current)
+
+        nearest = min(p[3] for p in pts)
+        return side, len(clusters), len(pts), nearest
+
+    def update_simple_cone_pass_state(self):
+        side, cluster_count, point_count, nearest = self.side_cone_clusters()
+
+        self.simple_last_side_name = side
+        self.simple_last_cluster_count = cluster_count
+        self.simple_last_nearest = nearest
+
+        active = cluster_count >= self.cone_side_min_clusters
+
+        if active:
+            self.simple_side_seen = True
+            self.simple_side_clear_count = 0
+        else:
+            if self.simple_side_seen:
+                self.simple_side_clear_count += 1
+            else:
+                self.simple_side_clear_count = 0
+
+        passed = (
+            self.simple_side_seen and
+            self.simple_side_clear_count >= self.cone_side_clear_frames
+        )
+
+        return {
+            'side': side,
+            'cluster_count': cluster_count,
+            'point_count': point_count,
+            'nearest': nearest,
+            'active': active,
+            'seen': self.simple_side_seen,
+            'clear_count': self.simple_side_clear_count,
+            'passed': passed,
+        }
 
     # ========================================================
     # Command helpers
@@ -2876,17 +3342,36 @@ class StanleyMissionFSMNode(Node):
         }
 
     def tunnel_exit_front_wall_state(self):
+        """
+        터널 탈출 판단용 벽 상태.
+
+        기존 방식은 전방 -90~90도 전체를 검사했기 때문에
+        터널을 빠져나온 뒤에도 정면/모서리 점 때문에 clear가 잘 안 되는 문제가 있었다.
+
+        수정 방식:
+          - 전방 전체가 아니라 측면 밴드만 검사한다.
+          - 기본 검사 각도: -90~-60도, 60~90도.
+          - 이 측면 밴드에 벽 점이 없으면 터널을 빠져나온 것으로 판단한다.
+        """
         left_hits = 0
         right_hits = 0
 
-        for x, y, _, angle in self.lidar_points:
-            angle_deg = math.degrees(angle)
-            while angle_deg > 180.0:
-                angle_deg -= 360.0
-            while angle_deg < -180.0:
-                angle_deg += 360.0
+        min_abs = min(
+            abs(self.tunnel_exit_side_angle_min_abs_deg),
+            abs(self.tunnel_exit_side_angle_max_abs_deg),
+        )
+        max_abs = max(
+            abs(self.tunnel_exit_side_angle_min_abs_deg),
+            abs(self.tunnel_exit_side_angle_max_abs_deg),
+        )
 
-            if not (-self.tunnel_exit_front_angle_deg <= angle_deg <= self.tunnel_exit_front_angle_deg):
+        for x, y, _, angle in self.lidar_points:
+            angle_deg = normalize_deg(math.degrees(angle))
+
+            in_left_side_band = min_abs <= angle_deg <= max_abs
+            in_right_side_band = -max_abs <= angle_deg <= -min_abs
+
+            if not (in_left_side_band or in_right_side_band):
                 continue
             if x < self.tunnel_wall_x_min:
                 continue
@@ -3089,30 +3574,29 @@ class StanleyMissionFSMNode(Node):
 
         # 요구사항 반영:
         # 1) 회전교차로에서는 차량을 반드시 한 번 인식해야 출발한다.
-        # 2) 이후 회전 구간을 rotary_min_time(기본 4초) 이상 지속하고,
-        #    ROTARY 상태에서 고깔 latch가 들어오면 회전교차로 완료로 판단한다.
+        # 2) 이후 회전 구간을 rotary_min_time(기본 4초) 이상 지속하면 회전교차로 완료로 판단한다.
+        # 고깔 위치 latch는 ROTARY가 아니라 CONE 상태에 들어간 뒤부터 시작한다.
         rotary_time_ok = self.state_elapsed() >= self.rotary_min_time
-        cone_seen_ok = self.cone_latched
-        complete_ok = self.rotary_vehicle_seen and rotary_time_ok and cone_seen_ok
+        complete_ok = self.rotary_vehicle_seen and rotary_time_ok
 
         if complete_ok:
             if cluster is not None:
                 self.rotary_vehicle_seen = True
                 self.rotary_clear_start = None
                 self.rotary_vehicle_distance = cluster.nearest
-                self.rotary_follow_status = 'CONE_READY_WAIT_VEHICLE'
+                self.rotary_follow_status = 'ROTARY_DONE_WAIT_VEHICLE'
                 return self.stop_cmd(), (
-                    f'ROTARY_CONE_READY_WAIT_VEHICLE_{cluster.nearest:.2f}m '
-                    f'cone={self.cone_latched} t={self.state_elapsed():.1f}s'
+                    f'ROTARY_DONE_WAIT_VEHICLE_{cluster.nearest:.2f}m '
+                    f't={self.state_elapsed():.1f}s'
                 )
 
-            self.next_state('(rotary >= 4s and cone latched)')
+            self.next_state('(rotary >= 4s and lead vehicle clear)')
             # 상태 전환 직후에도 이번 frame의 cmd는 안전하게 Stanley 기반으로 한 번 더 보낸다.
             speed_limit = self.compute_rotary_speed_limit(cluster if active else None)
             if speed_limit <= 0.0:
                 return self.stop_cmd(), 'ROTARY_DONE_BUT_LEAD_STOP'
             cmd, _ = self.rotary_cmd_from_lane(lane_data, speed_limit=speed_limit)
-            return cmd, 'ROTARY_DONE_CONE_SEEN'
+            return cmd, 'ROTARY_DONE'
 
         # 차량을 보기 전에는 정지 또는 설정한 아주 낮은 속도로만 creep한다.
         if not self.rotary_vehicle_seen and not active:
@@ -3156,83 +3640,163 @@ class StanleyMissionFSMNode(Node):
         )
 
     def handle_cone(self, lane_data):
-        lane_bias_px = 0.0
-        extra_yaw = 0.0
+        self.update_cone_center_only_timeout()
 
-        if self.cone_latched:
-            if not self.cone_target_locked:
-                self.cone_target_lane = self.choose_cone_target_lane(self.cone_latched_lanes)
-                self.cone_target_locked = self.cone_target_lane in ('left', 'right')
-
-            if self.cone_target_lane == 'left':
-                lane_bias_px = self.last_lane_width * self.cone_lane_bias_ratio
-                extra_yaw = self.cone_extra_yaw
-            elif self.cone_target_lane == 'right':
-                lane_bias_px = -self.last_lane_width * self.cone_lane_bias_ratio
-                extra_yaw = -self.cone_extra_yaw
-
-        if lane_data is not None and (
-            str(lane_data.get('mode', '')).startswith('cone_pair_') or
-            str(lane_data.get('mode', '')).startswith('cone_recover_inner_') or
-            str(lane_data.get('mode', '')).startswith('cone_force_single_')
-        ):
+        if not self.cone_simple_force_enabled:
             lane_bias_px = 0.0
+            extra_yaw = 0.0
 
-        close_cluster = self.obstacle_in_corridor(
-            0.12,
-            0.55,
-            self.drivable_half_width,
-            min_points=3,
-            ignore_wall=True,
-        )
-        if close_cluster is not None and close_cluster.nearest < 0.25:
-            return self.stop_cmd(), 'CONE_SAFE_STOP'
+            if self.cone_latched:
+                if not self.cone_target_locked:
+                    self.cone_target_lane = self.choose_cone_target_lane(self.cone_latched_lanes)
+                    self.cone_target_locked = self.cone_target_lane in ('left', 'right')
 
-        if self.cone_latched and self.cone_first_latch_time is not None:
-            latch_time_ok = (time.monotonic() - self.cone_first_latch_time) >= self.cone_latched_min_time
-            state_time_ok = self.state_elapsed() >= self.cone_min_time
+                if self.cone_target_lane == 'left':
+                    lane_bias_px = self.last_lane_width * self.cone_lane_bias_ratio
+                    extra_yaw = self.cone_extra_yaw
+                elif self.cone_target_lane == 'right':
+                    lane_bias_px = -self.last_lane_width * self.cone_lane_bias_ratio
+                    extra_yaw = -self.cone_extra_yaw
 
-            if latch_time_ok and state_time_ok:
-                if self.cone_recover_start_time is None:
-                    self.cone_recover_start_time = time.monotonic()
-
+            if lane_data is not None and (
+                str(lane_data.get('mode', '')).startswith('cone_pair_') or
+                str(lane_data.get('mode', '')).startswith('cone_recover_inner_') or
+                str(lane_data.get('mode', '')).startswith('cone_force_single_')
+            ):
                 lane_bias_px = 0.0
-                extra_yaw = 0.0
+
+            close_cluster = self.obstacle_in_corridor(
+                0.12,
+                0.55,
+                self.drivable_half_width,
+                min_points=3,
+                ignore_wall=True,
+            )
+            if close_cluster is not None and close_cluster.nearest < 0.25:
+                return self.stop_cmd(), 'CONE_SAFE_STOP'
+
+            if self.cone_latched and self.cone_first_latch_time is not None:
+                latch_time_ok = (time.monotonic() - self.cone_first_latch_time) >= self.cone_latched_min_time
+                state_time_ok = self.state_elapsed() >= self.cone_min_time
+
+                if latch_time_ok and state_time_ok:
+                    if self.cone_recover_start_time is None:
+                        self.cone_recover_start_time = time.monotonic()
+
+                    lane_bias_px = 0.0
+                    extra_yaw = 0.0
+
+            cmd, _ = self.stanley_cmd_from_lane(
+                lane_data,
+                speed_limit=self.cone_speed_limit,
+                extra_yaw=extra_yaw,
+                lane_bias_px=lane_bias_px,
+            )
+
+            if self.cone_recover_start_time is not None:
+                recover_elapsed = time.monotonic() - self.cone_recover_start_time
+                lane_ok = lane_data is not None and lane_data.get('confidence', 0.0) >= self.cone_recover_confidence
+                cone_side_active, cone_side, cone_hits, cone_nearest = self.cone_lidar_side_obstacle()
+
+                if cone_side_active:
+                    self.cone_lidar_clear_count = 0
+                else:
+                    self.cone_lidar_clear_count += 1
+
+                lidar_clear_ok = self.cone_lidar_clear_count >= self.cone_lidar_clear_frames
+
+                if recover_elapsed >= self.cone_recover_time and lane_ok and lidar_clear_ok:
+                    self.next_state('(cone latched and lane shift done)')
+                return cmd, (
+                    f'CONE_RECOVER_CENTER {recover_elapsed:.1f}/{self.cone_recover_time:.1f}s '
+                    f'mode={lane_data.get("mode", "none") if lane_data is not None else "none"} '
+                    f'target={self.cone_target_lane} lidar_{cone_side}='
+                    f'{cone_hits}/{self.cone_lidar_min_hits} clear='
+                    f'{self.cone_lidar_clear_count}/{self.cone_lidar_clear_frames} '
+                    f'd={cone_nearest:.2f}'
+                )
+
+            lane_mode = lane_data.get('mode', 'none') if lane_data is not None else 'none'
+            return cmd, (
+                f'CONE_LATCH_{self.cone_target_lane.upper()}_{sorted(list(self.cone_latched_lanes))} '
+                f'mode={lane_mode}'
+            )
+
+        # -------------------------
+        # Simple force-shift cone avoidance
+        # -------------------------
+        # target이 아직 정해지지 않았으면 정상 차선추종으로 대기한다.
+        if self.cone_latched and not self.cone_target_locked:
+            self.cone_target_lane = self.choose_cone_target_lane(self.cone_latched_lanes)
+            self.cone_target_locked = self.cone_target_lane in ('left', 'right')
+
+        if not self.simple_cone_avoid_active():
+            cmd, _ = self.stanley_cmd_from_lane(
+                lane_data,
+                speed_limit=self.cone_after_force_speed_limit,
+                extra_yaw=0.0,
+                lane_bias_px=0.0,
+            )
+            return cmd, (
+                f'SIMPLE_CONE_WAIT_TARGET_LANE_FOLLOW '
+                f'latched={sorted(list(self.cone_latched_lanes))} target={self.cone_target_lane}'
+            )
+
+        self.ensure_simple_cone_started()
+        side_info = self.update_simple_cone_pass_state()
+
+        # 1) FORCE_SHIFT: 일정 시간 동안 차선을 무시하고 강제 조향한다.
+        force_elapsed = time.monotonic() - self.simple_force_start_time
+
+        if force_elapsed < self.cone_force_duration:
+            cmd = Twist()
+            cmd.linear.x = float(self.forced_cone_linear_speed())
+            cmd.angular.z = float(
+                clamp(self.forced_cone_yaw_for_target(), -MAX_YAW_RATE, MAX_YAW_RATE)
+            )
+
+            self.prev_speed = cmd.linear.x
+            self.current_lane_bias_px = 0.0
+            self.simple_phase = 'FORCE_SHIFT'
+
+            if side_info['passed']:
+                self.next_state('(simple cone passed during force shift)')
+
+            return cmd, (
+                f'SIMPLE_FORCE_SHIFT target={self.cone_target_lane} '
+                f'v={cmd.linear.x:.2f} wz={cmd.angular.z:.2f} '
+                f't={force_elapsed:.2f}/{self.cone_force_duration:.2f}s '
+                f'{side_info["side"]}_clusters={side_info["cluster_count"]}/{self.cone_side_min_clusters} '
+                f'points={side_info["point_count"]} seen={side_info["seen"]} '
+                f'clear={side_info["clear_count"]}/{self.cone_side_clear_frames} '
+                f'd={side_info["nearest"]:.2f}'
+            )
+
+        # 2) force 이후: 다시 정상 차선 추종으로 복귀한다.
+        self.simple_phase = 'LANE_FOLLOW_AFTER_FORCE'
 
         cmd, _ = self.stanley_cmd_from_lane(
             lane_data,
-            speed_limit=self.cone_speed_limit,
-            extra_yaw=extra_yaw,
-            lane_bias_px=lane_bias_px,
+            speed_limit=self.cone_after_force_speed_limit,
+            extra_yaw=0.0,
+            lane_bias_px=0.0,
         )
 
-        if self.cone_recover_start_time is not None:
-            recover_elapsed = time.monotonic() - self.cone_recover_start_time
-            lane_ok = lane_data is not None and lane_data.get('confidence', 0.0) >= self.cone_recover_confidence
-            cone_side_active, cone_side, cone_hits, cone_nearest = self.cone_lidar_side_obstacle()
-
-            if cone_side_active:
-                self.cone_lidar_clear_count = 0
-            else:
-                self.cone_lidar_clear_count += 1
-
-            lidar_clear_ok = self.cone_lidar_clear_count >= self.cone_lidar_clear_frames
-
-            if recover_elapsed >= self.cone_recover_time and lane_ok and lidar_clear_ok:
-                self.next_state('(cone latched and lane shift done)')
+        if side_info['passed']:
+            self.next_state('(simple cone side clusters appeared and disappeared)')
             return cmd, (
-                f'CONE_RECOVER_CENTER {recover_elapsed:.1f}/{self.cone_recover_time:.1f}s '
-                f'mode={lane_data.get("mode", "none") if lane_data is not None else "none"} '
-                f'target={self.cone_target_lane} lidar_{cone_side}='
-                f'{cone_hits}/{self.cone_lidar_min_hits} clear='
-                f'{self.cone_lidar_clear_count}/{self.cone_lidar_clear_frames} '
-                f'd={cone_nearest:.2f}'
+                f'SIMPLE_CONE_PASSED target={self.cone_target_lane} '
+                f'{side_info["side"]}_clusters={side_info["cluster_count"]}/{self.cone_side_min_clusters} '
+                f'clear={side_info["clear_count"]}/{self.cone_side_clear_frames}'
             )
 
-        lane_mode = lane_data.get('mode', 'none') if lane_data is not None else 'none'
         return cmd, (
-            f'CONE_LATCH_{self.cone_target_lane.upper()}_{sorted(list(self.cone_latched_lanes))} '
-            f'mode={lane_mode}'
+            f'SIMPLE_LANE_FOLLOW_AFTER_FORCE target={self.cone_target_lane} '
+            f't={force_elapsed:.2f}/{self.cone_force_duration:.2f}s '
+            f'{side_info["side"]}_clusters={side_info["cluster_count"]}/{self.cone_side_min_clusters} '
+            f'points={side_info["point_count"]} seen={side_info["seen"]} '
+            f'clear={side_info["clear_count"]}/{self.cone_side_clear_frames} '
+            f'd={side_info["nearest"]:.2f}'
         )
 
     def handle_parking(self, lane_data, finish_detected):
@@ -3288,7 +3852,10 @@ class StanleyMissionFSMNode(Node):
 
         text1 = f'state={self.state} status={status}'
         text2 = f'v={self.prev_speed:.2f} lane_w={self.last_lane_width} bias={self.current_lane_bias_px:.1f}'
-        text3 = f'cones_latched={sorted(list(self.cone_latched_lanes))} target={self.cone_target_lane} finish={finish_ratio:.2f}'
+        text3 = (
+            f'cones_latched={sorted(list(self.cone_latched_lanes))} '
+            f'target={self.cone_target_lane} simple={self.simple_phase} finish={finish_ratio:.2f}'
+        )
         box_text = 'box=None'
         if self.box_track_candidate is not None:
             box_text = (
